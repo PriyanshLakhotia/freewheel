@@ -45,10 +45,18 @@ test('optional transcription sends only audio and vocabulary to the transcriptio
     assert.equal(url, 'https://api.openai.com/v1/audio/transcriptions');
     assert.equal(options.headers.Authorization, 'Bearer test-only');
     const form = options.body as FormData;
-    assert.equal(form.get('model'), 'gpt-4o-mini-transcribe');
-    assert.equal(form.get('language'), 'en');
+    assert.equal(form.get('model'), 'gpt-transcribe');
+    assert.equal(form.has('language'), false);
+    assert.deepEqual(form.getAll('languages[]'), ['en']);
+    assert.deepEqual(form.getAll('keywords[]'), ['Puck', 'Codex', 'Amp', 'Freewheel', 'GitHub']);
     assert.match(String(form.get('prompt')), /Codex/);
-    assert.deepEqual([...form.keys()].sort(), ['file', 'language', 'model', 'prompt']);
+    assert.deepEqual([...new Set(form.keys())].sort(), [
+      'file',
+      'keywords[]',
+      'languages[]',
+      'model',
+      'prompt',
+    ]);
     const file = form.get('file') as File;
     assert.equal(file.name, 'command.webm');
     assert.deepEqual(new Uint8Array(await file.arrayBuffer()), new Uint8Array([1, 2, 3]));
@@ -58,5 +66,11 @@ test('optional transcription sends only audio and vocabulary to the transcriptio
     text: 'Check the failing tests.',
   });
   assert.equal(requests, 1);
-  assert.equal(port.state.audioSpend, 0.0005);
+  assert(Math.abs(port.state.audioSpend - 0.00075) < 1e-12);
+  port.state.settings.audioBudget = 0.001;
+  await assert.rejects(
+    audio.transcribe(Buffer.from([1, 2, 3]), 'audio/webm', 10),
+    /budget reached/,
+  );
+  assert.equal(requests, 1);
 });

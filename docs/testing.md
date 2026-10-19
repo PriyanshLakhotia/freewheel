@@ -15,7 +15,7 @@
 - API transcription of dictated commands and confirmations; browser-recognized command text is never dispatched in this mode. Completion speech waits during dictation and selects its original conversation.
 - ChatGPT-only Codex authentication before dispatch; OpenAI API environment variables are absent from both agents.
 - Playback stop detection accepts only the two stop phrases, ignores quoted output and stale events, and never forwards playback-time speech as a task or approval. Pending cloud speech can be aborted without starting fallback playback.
-- Audio key requirements, reserving estimated budget before requests, and fixed OpenAI destinations. Network calls are mocked.
+- Audio key requirements, reserving estimated budget before requests, and fixed OpenAI destinations. The `gpt-transcribe` contract checks multipart language/keyword arrays, removal of the old singular language field, and the $0.0045/minute budget rate. Network calls are mocked.
 
 CI needs no microphone, credentials, real agents or paid endpoints. Vosk's lazy WASM chunk is large; Vite reports its expected size warning. It loads for offline recognition, diagnostics, or local interruption detection during an active voice session.
 

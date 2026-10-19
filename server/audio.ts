@@ -35,15 +35,17 @@ export class AudioService {
     return Buffer.from(await response.arrayBuffer());
   }
   async transcribe(bytes: Buffer, mime: string, duration: number) {
-    this.reserve((duration / 60) * 0.003);
+    this.reserve((duration / 60) * 0.0045);
     const form = new FormData();
     form.append(
       'file',
       new Blob([new Uint8Array(bytes)], { type: mime }),
       mime.includes('mp4') ? 'command.m4a' : 'command.webm',
     );
-    form.append('model', 'gpt-4o-mini-transcribe');
-    form.append('language', 'en');
+    form.append('model', 'gpt-transcribe');
+    form.append('languages[]', 'en');
+    for (const keyword of ['Puck', 'Codex', 'Amp', 'Freewheel', 'GitHub'])
+      form.append('keywords[]', keyword);
     form.append(
       'prompt',
       'A software developer speaking to Amp or Codex through Freewheel. Terms: Puck, Codex, repository, pull request, GitHub.',

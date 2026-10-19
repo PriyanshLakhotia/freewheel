@@ -1385,7 +1385,8 @@ function Guide({ onStart }: { onStart: () => void }) {
           <h3>Cost</h3>
           <p>
             Normal Codex limits and Amp credits apply. Browser/offline speech adds no API charge.
-            Optional OpenAI audio: $0.003 per dictated minute and $15 per million spoken characters.
+            Optional OpenAI audio: $0.0045 per dictated minute and $15 per million spoken
+            characters.
           </p>
           <a href="https://developers.openai.com/api/docs/pricing" target="_blank" rel="noreferrer">
             OpenAI pricing

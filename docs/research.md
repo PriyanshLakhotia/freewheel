@@ -42,16 +42,16 @@ Task read-back requires “send it”; permission requests require a number. Spo
 
 ## Optional OpenAI audio
 
-The OpenAI key is used only by the two audio endpoints. Connecting it enables text-to-speech and command transcription. Either remains independently selectable. Wake detection never supplies task text in API mode; recorded commands, confirmations and follow-ups go through transcription. No Responses, Chat Completions, agent or Realtime API is used by Freewheel. Idle listening and playback stop detection are not sent to the paid OpenAI API. After a wake and acknowledgement, optional recording ends on silence (maximum 45 seconds) and goes to the transcription endpoint using gpt-4o-mini-transcribe. Optional output uses the speech endpoint, tts-1, and Nova. System voice is the fallback. The transcription prompt supplies agent names and coding vocabulary, a documented technique for improving recognition of specific words; this is a reason to try it for technical dictation, not proof of better performance on a bike. [Speech to text](https://developers.openai.com/api/docs/guides/speech-to-text), [text to speech](https://developers.openai.com/api/docs/guides/text-to-speech)
+The OpenAI key is used only by the two audio endpoints. Connecting it enables text-to-speech and command transcription. Either remains independently selectable. Wake detection never supplies task text in API mode; recorded commands, confirmations and follow-ups go through transcription. No Responses, Chat Completions, agent or Realtime API is used by Freewheel. Idle listening and playback stop detection are not sent to the paid OpenAI API. After a wake and acknowledgement, optional recording ends on silence (maximum 45 seconds) and goes to the transcription endpoint using gpt-transcribe. Optional output uses the speech endpoint, tts-1, and Nova. System voice is the fallback. The request uses the recommended recorded-speech model, an English `languages[]` hint, and `keywords[]` for agent names. The transcription prompt supplies coding context, a documented technique for improving recognition of specific words; this is a reason to try it for technical dictation, not proof of better performance on a bike. [Speech to text](https://developers.openai.com/api/docs/guides/speech-to-text), [text to speech](https://developers.openai.com/api/docs/guides/text-to-speech)
 
-| Service            | Published rate used in the app |
-| ------------------ | ------------------------------ |
-| Mini transcription | $0.003 per recorded minute     |
-| TTS-1              | $15 per million characters     |
+| Service           | Published rate used in the app |
+| ----------------- | ------------------------------ |
+| GPT transcription | $0.0045 per recorded minute    |
+| TTS-1             | $15 per million characters     |
 
-15 dictated minutes plus 9,000 spoken characters: `15 × 0.003 + 9000 / 1000000 × 15 = $0.18`. Coding is separate. The in-app budget is a conservative estimate per companion process, not a provider billing limit. [OpenAI pricing](https://developers.openai.com/api/docs/pricing)
+15 dictated minutes plus 9,000 spoken characters: `15 × 0.0045 + 9000 / 1000000 × 15 = $0.2025`. Coding is separate. The in-app budget is a conservative estimate per companion process, not a provider billing limit. [OpenAI pricing](https://developers.openai.com/api/docs/pricing)
 
-Local stop detection avoids a continuously billed Realtime connection. Paid speech and transcription endpoints were contract-tested with mocked fetch, not a live key.
+Local stop detection avoids a continuously billed Realtime connection. Paid speech and transcription endpoints were contract-tested with mocked fetch, not a live key. The initial mini-model choice prioritized cost without an outdoor accuracy comparison; it was replaced with `gpt-transcribe` after checking the current recommendation. The difference is $0.09 per recorded hour.
 
 ## Sleep and execution
 
