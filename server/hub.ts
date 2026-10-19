@@ -32,6 +32,18 @@ export class Hub extends EventEmitter {
   private puckUpdates = new PuckUpdates(
     this.amp,
     (text, threadId) => {
+      const output = this.clean(text).slice(-100000);
+      const request = this.state.tasks.find(
+        (t) =>
+          t.transport === 'puck' &&
+          t.status === 'running' &&
+          t.externalId === threadId &&
+          t.output === output,
+      );
+      if (request) {
+        this.finish(request, 'completed');
+        return;
+      }
       const task: Task = {
         id: randomUUID(),
         agent: 'amp',
@@ -40,7 +52,7 @@ export class Hub extends EventEmitter {
         prompt: 'Puck update',
         status: 'completed',
         externalId: threadId,
-        output: this.clean(text).slice(-100000),
+        output,
         summary: extractBriefing(this.clean(text)),
         activity: 'Update',
         createdAt: Date.now(),

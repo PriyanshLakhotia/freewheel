@@ -87,3 +87,49 @@ test('Codex refuses API-key accounts before starting any coding thread', async (
     await rm(folder, { recursive: true, force: true });
   }
 });
+
+test('a Puck reply becomes one task and one spoken announcement', async (t) => {
+  const hub = new Hub();
+  hub.state.connections.amp = { available: true, connected: true, detail: 'Fixture' };
+  hub.state.settings.ampMode = 'puck';
+  const threadId = 'T-00000000-0000-0000-0000-000000000001';
+  let sent = '';
+  const announcements: string[] = [];
+  hub.on('event', (event) => {
+    if (event.type === 'announce') announcements.push(event.taskId);
+  });
+  t.mock.method(hub.puck, 'send', async (message: string) => {
+    sent = message;
+    return {
+      conversationID: threadId,
+      replyHandle: null,
+      status: 'replied' as const,
+      reply: 'Ready.',
+    };
+  });
+  t.mock.method(hub.amp, 'readPuck', async () => ({
+    id: threadId,
+    agentMode: 'puck',
+    messages: [
+      { role: 'user', content: [{ type: 'text', text: sent }] },
+      {
+        role: 'assistant',
+        messageId: 2,
+        state: { type: 'complete', stopReason: 'end_turn' },
+        content: [{ type: 'text', text: 'Ready.' }],
+      },
+    ],
+  }));
+  try {
+    const count = hub.state.tasks.length;
+    const task = await hub.dispatch('amp', 'default', 'Check the connection');
+    await until(() => task.status === 'completed');
+    assert.equal(task.output, 'Ready.');
+    assert.equal(hub.state.tasks.length, count + 1);
+    assert.deepEqual(announcements, [task.id]);
+  } finally {
+    hub.close();
+    await delay(50);
+    await rm(folder, { recursive: true, force: true });
+  }
+});
