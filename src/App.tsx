@@ -95,7 +95,7 @@ export default function App() {
               const data = JSON.parse(event.data);
               if (data.type === 'state') setState(data.state);
               else if (data.type === 'announce')
-                controller.current?.announce(data.text, data.agent, data.attention);
+                controller.current?.announce(data.text, data.agent, data.attention, data.taskId);
             } catch {
               /* Ignore a malformed event; next state repairs the view. */
             }
@@ -404,9 +404,11 @@ export default function App() {
                   )}
                   <div className="console-bottom">
                     <span>
-                      {state.settings.recognition === 'offline'
-                        ? 'On-device recognition'
-                        : 'Browser recognition'}
+                      {state.settings.transcription === 'openai'
+                        ? 'OpenAI transcription'
+                        : state.settings.recognition === 'offline'
+                          ? 'On-device recognition'
+                          : 'Browser recognition'}
                     </span>
                     <button
                       className={`quiet-button ${state.settings.quiet ? 'enabled' : ''}`}
@@ -420,6 +422,7 @@ export default function App() {
                 <div className="agent-grid">
                   {(['amp', 'codex'] as const).map((agent) => {
                     const connection = state.connections[agent];
+                    const manager = agent === 'amp' && state.settings.ampMode === 'puck';
                     const task = [...state.tasks]
                       .reverse()
                       .find((t) => t.agent === agent && t.projectId === project);
@@ -444,12 +447,18 @@ export default function App() {
                         {active && <p>{task.activity}</p>}
                         <div className="agent-bottom">
                           <span>
-                            {selected[agent] ? 'Continuing conversation' : 'New conversation'}
+                            {manager
+                              ? 'Puck manages your Amp threads'
+                              : selected[agent]
+                                ? 'Continuing conversation'
+                                : 'New conversation'}
                           </span>
                           <button
                             className="icon-button"
                             aria-label={`Send a task to ${agentName(agent)}`}
-                            disabled={!connection.connected || !!active}
+                            disabled={
+                              !connection.connected || (!!active && agent === 'amp' && !manager)
+                            }
                             onClick={() => {
                               setExternal(undefined);
                               setComposer(agent);
@@ -459,24 +468,32 @@ export default function App() {
                           </button>
                         </div>
                         <div className="agent-tools">
-                          <button
-                            onClick={() => void showThreads(agent)}
-                            disabled={!connection.connected || busy === 'threads-' + agent}
-                          >
-                            {busy === 'threads-' + agent ? 'Loading…' : 'Conversations'}
-                          </button>
+                          {!manager && (
+                            <button
+                              onClick={() => void showThreads(agent)}
+                              disabled={!connection.connected || busy === 'threads-' + agent}
+                            >
+                              {busy === 'threads-' + agent ? 'Loading…' : 'Conversations'}
+                            </button>
+                          )}
                           {active ? (
                             <button
                               onClick={() =>
                                 void action('stop', () => api(`/tasks/${task.id}/stop`, {}))
                               }
                             >
-                              Stop task
+                              {manager ? 'Stop waiting' : 'Stop task'}
                             </button>
                           ) : (
+                            !manager &&
                             selected[agent] && (
                               <button onClick={() => select(agent, undefined)}>Start fresh</button>
                             )
+                          )}
+                          {active && agent === 'codex' && (
+                            <button onClick={() => select(agent, undefined)}>
+                              New conversation
+                            </button>
                           )}
                         </div>
                       </section>
@@ -918,7 +935,9 @@ function Connections({
             <div className="connection-row" key={agent}>
               <div className="connection-row-title">
                 <span className={`channel-dot ${agent}`} />
-                <h3>{agent === 'amp' ? 'Amp' : 'Codex'}</h3>
+                <h3>
+                  {agent === 'amp' ? (state.settings.ampMode === 'puck' ? 'Puck' : 'Amp') : 'Codex'}
+                </h3>
                 <span
                   className={`status-badge ${state.connections[agent].connected ? 'good' : ''}`}
                 >
@@ -932,10 +951,61 @@ function Connections({
                     Uses your local login. To sign in: <code>codex login</code>.
                   </>
                 ) : (
-                  <>“Hey Puck” controls the Amp coding agent, not built-in Puck.</>
+                  <>
+                    {state.settings.ampMode === 'puck'
+                      ? 'Your latest Puck conversation. Manages agents in Amp.'
+                      : 'Direct coding through Amp CLI.'}
+                  </>
                 )}
               </p>
               {agent === 'amp' && (
+                <label className="inline-setting">
+                  Amp connection
+                  <select
+                    aria-label="Amp connection"
+                    value={state.settings.ampMode}
+                    disabled={active}
+                    onChange={(e) =>
+                      void update({ ampMode: e.target.value as Settings['ampMode'] })
+                    }
+                  >
+                    <option value="puck">Puck manager</option>
+                    <option value="cli">Direct Amp thread</option>
+                  </select>
+                </label>
+              )}
+              {agent === 'amp' && state.settings.ampMode === 'puck' && (
+                <>
+                  <button
+                    className="secondary-button"
+                    disabled={active || busy === 'puck-login'}
+                    onClick={() =>
+                      void action('puck-login', async () => {
+                        const result = await api<{ url?: string }>('/puck/login', {});
+                        if (result.url) window.location.assign(result.url);
+                      })
+                    }
+                  >
+                    Sign in to Puck
+                  </button>
+                  {state.connections.amp.connected && (
+                    <button
+                      className="text-button"
+                      onClick={() => void action('puck-logout', () => api('/puck/logout', {}))}
+                    >
+                      Disconnect
+                    </button>
+                  )}
+                  <p className="subtle">
+                    {state.puckUpdates === 'watching'
+                      ? 'Automatic replies connected.'
+                      : state.puckUpdates === 'unavailable'
+                        ? 'Automatic replies need Amp CLI signed into the same account.'
+                        : 'Automatic replies use your local Amp login. Sign-in lasts until quit.'}
+                  </p>
+                </>
+              )}
+              {agent === 'amp' && state.settings.ampMode === 'cli' && (
                 <form
                   className="credential-form"
                   onSubmit={(e) => {
@@ -1167,7 +1237,7 @@ function Connections({
             </div>
           </form>
           <p className="subtle">
-            Audio only. Coding uses Codex or Amp. Keys stay in memory until quit.
+            Voice and transcription. Coding uses Codex or Amp. Keys stay in memory until quit.
           </p>
           <label className="inline-setting">
             Command transcription
@@ -1183,7 +1253,9 @@ function Connections({
             </select>
           </label>
           {state.settings.transcription === 'openai' && (
-            <p className="subtle">Speak after “go ahead”; pause to finish recording.</p>
+            <p className="subtle">
+              Speak after “go ahead”; pause to send. Follow-ups and confirmations use OpenAI too.
+            </p>
           )}
           <label className="inline-setting">
             Session budget

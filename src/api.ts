@@ -29,11 +29,16 @@ export async function speechAudio(text: string, signal?: AbortSignal): Promise<B
   if (!res.ok) throw new Error((await res.json()).error);
   return res.blob();
 }
-export async function transcribe(blob: Blob, seconds: number): Promise<string> {
+export async function transcribe(
+  blob: Blob,
+  seconds: number,
+  signal?: AbortSignal,
+): Promise<string> {
   const res = await fetch(`/api/audio/transcribe?seconds=${Math.min(60, seconds).toFixed(2)}`, {
     method: 'POST',
     headers: { 'Content-Type': blob.type.split(';')[0], 'X-Freewheel-CSRF': csrf },
     body: blob,
+    signal,
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error);

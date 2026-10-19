@@ -4,13 +4,15 @@
 
 ## Automated
 
-`npm run check` passes TypeScript checks, 16 isolated tests and the production build. Formatting is enforced in CI. Tests cover:
+`npm run check` passes TypeScript checks, 20 isolated tests and the production build. Formatting is enforced in CI. Tests cover:
 
 - Concurrent JSON-RPC response matching, notifications, disconnects and transport restart.
-- Approval scoping, stale replies, continuation, one active turn per agent, cancellation, secret redaction and shutdown persistence.
+- Approval scoping, stale replies, continuation, independent Codex conversations, active-turn steering, cancellation, secret redaction and shutdown persistence.
 - Local API Host/Origin checks, DNS-rebinding attempts, cookies, CSRF and Unicode headers.
 - Wake routing, ignored ambient mentions, numbered approval syntax, bounded briefings, task confirmation and matching approvals to their agent.
 - Explicit wakes opening dictation with automatic follow-ups disabled; stale playback completions cannot reopen listening after stopping output.
+- Puck OAuth state, destination restrictions, MCP tool schema checks, concurrent messages and deduplicated asynchronous updates. MCP network responses are fixtures.
+- API transcription of dictated commands and confirmations; browser-recognized command text is never dispatched in this mode. Completion speech waits during dictation and selects its original conversation.
 - ChatGPT-only Codex authentication before dispatch; OpenAI API environment variables are absent from both agents.
 - Playback stop detection accepts only the two stop phrases, ignores quoted output and stale events, and never forwards playback-time speech as a task or approval. Pending cloud speech can be aborted without starting fallback playback.
 - Audio key requirements, reserving estimated budget before requests, and fixed OpenAI destinations. Network calls are mocked.
@@ -39,6 +41,7 @@ The audio diagnostics use synthetic Samantha-voice WAVs, not user recordings. Th
 
 ## Still requires the user's setup
 
+- Live authenticated Puck MCP messaging and delayed reports from delegated agents. The connection is implemented but needs the user to sign in; mocked MCP and transcript fixtures pass.
 - Actual earphone input/output and interruption during playback, microphone permissions, accent, wind, street noise, long sessions, Bluetooth reconnects, screen locking and tab suspension.
 - Real OpenAI transcription and Nova playback: no key was supplied. Budget and API behavior have isolated tests only.
 - Real consequential approval flows: tests use deterministic protocol fixtures. Agent smoke tests requested no tools or file changes.

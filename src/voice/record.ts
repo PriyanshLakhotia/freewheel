@@ -2,7 +2,8 @@ export function recordCommand(
   stream: MediaStream,
   context: AudioContext,
   signal: AbortSignal,
-): Promise<{ blob: Blob; seconds: number }> {
+  initialSilenceMs = 9000,
+): Promise<{ blob: Blob; seconds: number } | undefined> {
   return new Promise((resolve, reject) => {
     const mime = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm'].find((type) =>
       MediaRecorder.isTypeSupported(type),
@@ -38,7 +39,7 @@ export function recordCommand(
       }
       if (
         (spoke && Date.now() - lastVoice > 1600) ||
-        (!spoke && Date.now() - start > 9000) ||
+        (!spoke && Date.now() - start > initialSilenceMs) ||
         Date.now() - start > 45000
       )
         end();
@@ -52,7 +53,7 @@ export function recordCommand(
         return;
       }
       if (!spoke) {
-        reject(new Error('No speech heard. Say the wake phrase and try again.'));
+        resolve(undefined);
         return;
       }
       resolve({

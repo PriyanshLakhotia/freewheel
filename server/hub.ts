@@ -4,6 +4,8 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { RpcClient } from './rpc.js';
+import { PuckAdapter } from './adapters/puck.js';
+import { PuckUpdates } from './puck-updates.js';
 import { AmpAdapter } from './adapters/amp.js';
 import { dataDir, loadState, saveState } from './store.js';
 import { extractBriefing, SPOKEN_INSTRUCTIONS } from '../shared/speech.js';
@@ -25,6 +27,34 @@ export class Hub extends EventEmitter {
   };
   codex = new RpcClient();
   amp = new AmpAdapter(() => this.secrets.amp);
+  puck = new PuckAdapter(Number(process.env.PORT || 4318));
+  private puckRequests = new Map<string, AbortController>();
+  private puckUpdates = new PuckUpdates(
+    this.amp,
+    (text, threadId) => {
+      const latest = [...this.state.tasks].reverse().find((t) => t.transport === 'puck');
+      const task: Task = {
+        id: randomUUID(),
+        agent: 'amp',
+        transport: 'puck',
+        projectId: latest?.projectId || this.state.projects[0]?.id || '',
+        prompt: 'Puck update',
+        status: 'completed',
+        externalId: threadId,
+        output: this.clean(text).slice(-100000),
+        summary: extractBriefing(this.clean(text)),
+        activity: 'Update',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      this.state.tasks.push(task);
+      this.finish(task, 'completed');
+    },
+    (ready) => {
+      this.state.puckUpdates = ready ? 'watching' : 'unavailable';
+      this.changed();
+    },
+  );
   private awakeProcess?: ChildProcess;
   private pending = new Map<string, { rpcId: number | string; method: string; params: any }>();
   private approvalNumber = 0;
@@ -77,10 +107,11 @@ export class Hub extends EventEmitter {
     if (this.saveTimer) clearTimeout(this.saveTimer);
     this.saveTimer = setTimeout(() => saveState(this.state), 200);
   }
-  announce(text: string, agent?: Agent, attention = false) {
+  announce(text: string, agent?: Agent, attention = false, taskId?: string) {
     this.emit('event', {
       type: 'announce',
       attention,
+      taskId,
       id: randomUUID(),
       agent,
       text: this.clean(text),
@@ -88,7 +119,17 @@ export class Hub extends EventEmitter {
   }
   async connect() {
     await Promise.allSettled([
-      this.amp.connection().then((c) => {
+      (this.state.settings.ampMode === 'puck'
+        ? this.puck
+            .connect()
+            .then(() => ({
+              available: true,
+              connected: true,
+              detail: 'Connected to your Puck in Amp',
+            }))
+            .catch(() => ({ available: true, connected: false, detail: 'Sign in to Puck below' }))
+        : this.amp.connection()
+      ).then((c) => {
         this.state.connections.amp = c;
         this.changed();
       }),
@@ -115,8 +156,25 @@ export class Hub extends EventEmitter {
       })(),
     ]);
   }
+  async disconnectPuck() {
+    this.puckUpdates.close();
+    this.state.puckUpdates = 'off';
+    for (const [id, controller] of this.puckRequests) {
+      controller.abort();
+      const task = this.state.tasks.find((t) => t.id === id);
+      if (task) {
+        task.status = 'stopped';
+        task.activity = 'Disconnected; check Puck for agent status.';
+      }
+    }
+    await this.puck.close();
+    await this.connect();
+  }
   async threads(agent: Agent): Promise<ThreadChoice[]> {
-    if (agent === 'amp') return this.amp.threads();
+    if (agent === 'amp') {
+      if (this.state.settings.ampMode === 'puck') return [];
+      return this.amp.threads();
+    }
     await this.codex.start();
     const result = await this.codex.request('thread/list', {
       limit: 30,
@@ -140,15 +198,24 @@ export class Hub extends EventEmitter {
   ): Promise<Task> {
     if (!this.state.connections[agent].connected)
       throw new Error(`${agentName(agent)} is not connected. Open Connections first.`);
+    const usingPuck = agent === 'amp' && this.state.settings.ampMode === 'puck';
     if (
-      this.starting.has(agent) ||
-      this.state.tasks.some((t) => t.agent === agent && ['running', 'waiting'].includes(t.status))
+      !usingPuck &&
+      (this.starting.has(agent) ||
+        (agent === 'amp' &&
+          this.state.tasks.some(
+            (t) => t.agent === agent && ['running', 'waiting'].includes(t.status),
+          )))
     )
       throw new Error(
         `${agentName(agent)} is already working. Wait, or stop the current task first.`,
       );
     const project = this.state.projects.find((p) => p.id === projectId);
     if (!project) throw new Error('Choose a project first.');
+    if (usingPuck) {
+      continueTaskId = undefined;
+      externalId = undefined;
+    }
     const previous = continueTaskId
       ? this.state.tasks.find((t) => t.id === continueTaskId)
       : undefined;
@@ -158,9 +225,38 @@ export class Hub extends EventEmitter {
     )
       throw new Error('That conversation belongs to another agent or project.');
     let threadId = previous?.externalId || externalId;
+    const activeThread =
+      threadId &&
+      this.state.tasks.find(
+        (t) =>
+          t.agent === agent &&
+          t.externalId === threadId &&
+          ['running', 'waiting'].includes(t.status),
+      );
+    if (activeThread) {
+      if (agent !== 'codex' || !activeThread.turnId || activeThread.status === 'waiting')
+        throw new Error(
+          'This conversation is waiting or starting. Answer its pending request first.',
+        );
+      const account = await this.codex.request('account/read', { refreshToken: false });
+      if (account.account?.type !== 'chatgpt')
+        throw new Error('API-key coding is disabled. Sign in with ChatGPT.');
+      await this.codex.request('turn/steer', {
+        threadId,
+        expectedTurnId: activeThread.turnId,
+        input: [{ type: 'text', text: prompt, text_elements: [] }],
+      });
+      activeThread.prompt = this.clean(`${activeThread.prompt}\n\nFollow-up: ${prompt}`);
+      activeThread.activity = 'Follow-up sent';
+      activeThread.updatedAt = Date.now();
+      this.changed();
+      return activeThread;
+    }
+
     const task: Task = {
       id: randomUUID(),
       agent,
+      transport: usingPuck ? 'puck' : 'cli',
       projectId,
       prompt: this.clean(prompt),
       status: 'running',
@@ -182,7 +278,35 @@ export class Hub extends EventEmitter {
     this.changed();
     try {
       const instructions = `${SPOKEN_INSTRUCTIONS}\n\nUser request:\n${prompt}`;
-      if (agent === 'amp') {
+      if (usingPuck) {
+        const controller = new AbortController();
+        this.puckRequests.set(task.id, controller);
+        const marker = `freewheel-${task.id}`;
+        const message = `${SPOKEN_INSTRUCTIONS}
+
+You are the user's Amp manager. Delegate long tasks to separate agents and stay available for more instructions. Bring back a brief update when each task finishes. Use existing projects and runners; clarify an ambiguous destination. The local folder ${project.path} (${project.name}) is context, not an orb path.
+Freewheel request: ${marker}
+
+User request:
+${prompt}`;
+        void this.puck
+          .send(message, controller.signal)
+          .then(async (text) => {
+            if (task.status !== 'running') return;
+            task.output = this.clean(text).slice(-100000);
+            const watched = await this.puckUpdates.bind(marker);
+            if (task.status === 'running') this.finish(task, 'completed', undefined, !watched);
+          })
+          .catch(() => {
+            if (task.status === 'running')
+              this.finish(
+                task,
+                'error',
+                'Puck did not return a reply. Check its conversation in Amp before retrying.',
+              );
+          })
+          .finally(() => this.puckRequests.delete(task.id));
+      } else if (agent === 'amp') {
         this.amp.run(
           task.id,
           project.path,
@@ -394,7 +518,7 @@ export class Hub extends EventEmitter {
     task.updatedAt = Date.now();
     this.changed();
   }
-  private finish(task: Task, status: Task['status'], error?: string) {
+  private finish(task: Task, status: Task['status'], error?: string, announce = true) {
     task.status = status;
     task.updatedAt = Date.now();
     task.activity =
@@ -420,14 +544,25 @@ export class Hub extends EventEmitter {
     this.itemTexts.delete(task.id);
     this.stopping.delete(task.id);
     this.changed();
-    this.announce(`${agentName(task.agent)}. ${task.summary}`, task.agent, status === 'error');
+    if (announce)
+      this.announce(
+        `${agentName(task.agent)}. ${task.summary}`,
+        task.agent,
+        status === 'error',
+        task.id,
+      );
   }
   async stop(id: string) {
     const task = this.state.tasks.find((t) => t.id === id);
     if (!task || !['running', 'waiting'].includes(task.status))
       throw new Error('That task is no longer running.');
     this.stopping.add(id);
-    if (task.agent === 'amp') {
+    if (task.transport === 'puck') {
+      this.puckRequests.get(id)?.abort();
+      this.finish(task, 'stopped', undefined, false);
+      task.summary = 'Stopped waiting for this reply. Puck and its agents may still be working.';
+      this.changed();
+    } else if (task.agent === 'amp') {
       this.amp.stop(id);
       this.finish(task, 'stopped');
     } else if (task.turnId && task.externalId) {
@@ -502,6 +637,9 @@ export class Hub extends EventEmitter {
   close() {
     this.closed = true;
     this.awakeProcess?.kill();
+    this.puckUpdates.close();
+    for (const request of this.puckRequests.values()) request.abort();
+    void this.puck.close();
     this.amp.close();
     this.codex.close();
     if (this.saveTimer) clearTimeout(this.saveTimer);

@@ -9,7 +9,8 @@ Prepare at your desk, start a ride, then speak to two coding agents without look
 - Two explicit wake phrases: Hey Puck and Hey Codex.
 - Acknowledgement earcons, a short follow-up window, repeat, status, stop, and quiet commands.
 - Concise audio responses: outcome, one important detail, next decision. Full transcript remains visible.
-- Independent agents, project selection, resumable tasks, completion announcements, actionable failure states.
+- Puck is the Amp manager, available while delegated threads work. Codex supports separate conversations and steering active turns. Finished replies enter one audio queue and carry their conversation identity.
+- OpenAI handles dictated commands, confirmations and voice output when connected; reasoning and coding stay on Amp and Codex accounts.
 - Explicit approvals; no accidental “yes” from ambient speech. Read back actions with an approval number.
 - Local credentials stay out of browser persistence and Git.
 - Keep-awake is an owned, reversible caffeinate process, never a permanent system setting.

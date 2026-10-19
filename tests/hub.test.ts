@@ -16,7 +16,7 @@ async function until(fn: () => boolean) {
   }
   throw new Error('Fixture did not reach expected state');
 }
-test('agent lifecycle: approval, stale reply, continuation, concurrent turn rejection and stop', async () => {
+test('agent lifecycle: approval, stale reply, continuation, independent conversations and stop', async () => {
   const hub = new Hub(
     new RpcClient(process.execPath, [resolve('tests/fixtures/agent-server.mjs')]),
   );
@@ -28,7 +28,14 @@ test('agent lifecycle: approval, stale reply, continuation, concurrent turn reje
     const approval = hub.state.approvals[0];
     assert.equal(approval.detail, 'npm test');
     assert.equal(approval.number, 1);
-    await assert.rejects(hub.dispatch('codex', 'default', 'another task'), /already working/);
+    const parallel = await hub.dispatch('codex', 'default', 'another task');
+    assert.notEqual(parallel.externalId, task.externalId);
+    await until(() => parallel.status === 'completed');
+    assert.equal(task.status, 'waiting');
+    await assert.rejects(
+      hub.dispatch('codex', 'default', 'same conversation', task.id),
+      /pending request/,
+    );
     hub.answer(approval.id, 'accept');
     assert.throws(() => hub.answer(approval.id, 'accept'), /expired/);
     await until(() => task.status === 'completed');
@@ -39,6 +46,9 @@ test('agent lifecycle: approval, stale reply, continuation, concurrent turn reje
     await until(() => continued.status === 'completed');
     const running = await hub.dispatch('codex', 'default', 'stay running');
     assert.equal(running.status, 'running');
+    const steered = await hub.dispatch('codex', 'default', 'Also check types', running.id);
+    assert.equal(steered.id, running.id);
+    assert.match(steered.prompt, /Also check types/);
     await hub.stop(running.id);
     assert.equal(running.status, 'stopped');
     await assert.rejects(hub.stop(running.id), /no longer running/);

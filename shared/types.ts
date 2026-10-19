@@ -8,6 +8,7 @@ export interface Project {
 export interface Task {
   id: string;
   agent: Agent;
+  transport?: 'puck' | 'cli';
   projectId: string;
   prompt: string;
   status: TaskStatus;
@@ -42,6 +43,7 @@ export interface Connection {
   detail: string;
 }
 export interface Settings {
+  ampMode: 'puck' | 'cli';
   recognition: 'browser' | 'offline';
   speech: 'system' | 'openai';
   transcription: 'recognizer' | 'openai';
@@ -63,6 +65,7 @@ export interface State {
   platform: string;
   modelReady: boolean;
   audioSpend: number;
+  puckUpdates?: 'off' | 'watching' | 'unavailable';
 }
 export interface ThreadChoice {
   id: string;
@@ -72,9 +75,17 @@ export interface ThreadChoice {
 }
 export type ServerEvent =
   | { type: 'state'; state: State }
-  | { type: 'announce'; id: string; agent?: Agent; text: string; attention?: boolean };
+  | {
+      type: 'announce';
+      id: string;
+      agent?: Agent;
+      text: string;
+      attention?: boolean;
+      taskId?: string;
+    };
 export const agentName = (agent: Agent) => (agent === 'amp' ? 'Puck' : 'Codex');
 export const DEFAULT_SETTINGS: Settings = {
+  ampMode: 'puck',
   recognition: 'browser',
   transcription: 'recognizer',
   speech: 'system',

@@ -34,6 +34,7 @@ interface Options {
   select: (agent: Agent, id?: string) => void;
   view: (view: VoiceView) => void;
   notice: (text: string) => void;
+  capture?: typeof recordCommand;
 }
 export class VoiceController {
   view: VoiceView = { phase: 'off', active: false, heard: '', spoken: '', level: 0 };
@@ -48,7 +49,7 @@ export class VoiceController {
     continueTaskId?: string;
   };
   private last = '';
-  private queue: { text: string; agent?: Agent }[] = [];
+  private queue: { text: string; agent?: Agent; taskId?: string }[] = [];
   private speaking = false;
   private epoch = 0;
   private outputGeneration = 0;
@@ -56,6 +57,7 @@ export class VoiceController {
   private timer?: ReturnType<typeof setInterval>;
   private lastHeard = { text: '', at: 0 };
   private handling = false;
+  private cloudTurn = false;
   constructor(private options: Options) {
     this.speaker = new Speaker(() => options.state().settings, options.notice);
     this.recognizer = new Recognition({
@@ -92,7 +94,9 @@ export class VoiceController {
       )
         throw new Error('Install the offline model in Connections first.');
       await this.recognizer.start(
-        this.options.state().settings.recognition,
+        this.options.state().settings.transcription === 'openai' && this.options.state().modelReady
+          ? 'offline'
+          : this.options.state().settings.recognition,
         this.options.state().modelReady,
       );
       if (epoch !== this.epoch) return;
@@ -133,6 +137,7 @@ export class VoiceController {
     this.outputGeneration++;
     this.recording?.abort();
     this.recording = undefined;
+    this.cloudTurn = false;
     clearInterval(this.timer);
     this.recognizer.stop();
     this.speaker.stop();
@@ -208,20 +213,46 @@ export class VoiceController {
       Date.now() + (this.pending ? 20000 : this.options.state().settings.followUpSeconds * 1000);
     this.patch({ phase: this.pending ? 'confirming' : this.view.agent ? 'awake' : 'listening' });
     this.flushQueue();
+    if (
+      !this.handling &&
+      !this.speaking &&
+      !this.cloudTurn &&
+      agent &&
+      this.options.state().settings.transcription === 'openai' &&
+      this.awakeUntil > Date.now()
+    )
+      void this.cloudConversation(agent);
   }
-  announce(text: string, agent?: Agent, attention = false) {
+  announce(text: string, agent?: Agent, attention = false, taskId?: string) {
     if (!this.view.active || (this.options.state().settings.quiet && !attention)) return;
-    this.queue.push({ text, agent });
+    this.queue.push({ text, agent, taskId });
     this.flushQueue();
   }
   private flushQueue() {
-    if (this.speaking || this.recording || this.pending || this.handling || !this.view.active)
+    if (
+      this.speaking ||
+      this.recording ||
+      this.cloudTurn ||
+      this.pending ||
+      this.handling ||
+      !this.view.active
+    )
       return;
     const next = this.queue.shift();
-    if (next) void this.say(next.text, next.agent);
+    if (next) {
+      if (next.agent && next.taskId) this.options.select(next.agent, next.taskId);
+      void this.say(next.text, next.agent);
+    }
   }
   async hear(raw: string) {
-    if (!this.view.active || this.speaking || this.recording || this.handling || !raw.trim())
+    if (
+      !this.view.active ||
+      this.speaking ||
+      this.recording ||
+      this.cloudTurn ||
+      this.handling ||
+      !raw.trim()
+    )
       return;
     const now = Date.now();
     if (this.lastHeard.text === raw && now - this.lastHeard.at < 1500) return;
@@ -229,6 +260,8 @@ export class VoiceController {
     const wake = detectWake(raw);
     let agent = wake?.agent || (now < this.awakeUntil ? this.view.agent : undefined);
     if (!agent) return;
+    const cloud = this.options.state().settings.transcription === 'openai';
+    if (cloud && !wake) return;
     this.handling = true;
     try {
       this.patch({ agent, heard: raw, phase: 'awake' });
@@ -237,15 +270,17 @@ export class VoiceController {
         this.earcon(agent);
         if (this.pending?.agent !== agent) this.pending = undefined;
       }
-      const command = wake ? wake.command : raw;
+      // In API transcription mode the wake detector never supplies task text.
+      // Commands, follow-ups and confirmations all come from recorded audio.
+      const command = cloud ? '' : wake ? wake.command : raw;
       if (!command) {
         const output = this.outputGeneration + 1;
         await this.say(`${agentName(agent)}. Go ahead.`, agent);
         if (!this.view.active || output !== this.outputGeneration) return;
         // An explicit wake always opens a command window, even when automatic follow-ups are off.
         this.awakeUntil = Date.now() + 20000;
-        this.recognizer.setCommandMode(true);
-        if (this.options.state().settings.transcription === 'openai') await this.dictate(agent);
+        this.recognizer.setCommandMode(!cloud);
+        if (cloud) await this.cloudConversation(agent);
         return;
       }
       await this.handle(agent, command);
@@ -261,6 +296,14 @@ export class VoiceController {
   private async handle(agent: Agent, command: string) {
     const intent = parseIntent(command);
     const state = this.options.state();
+    if (
+      agent === 'amp' &&
+      state.settings.ampMode === 'puck' &&
+      ['status', 'stop', 'new'].includes(intent.type)
+    ) {
+      await this.send(agent, command, this.options.project());
+      return;
+    }
     if (intent.type === 'repeat') {
       await this.say(this.last || 'Nothing to repeat yet.', agent);
       return;
@@ -303,9 +346,19 @@ export class VoiceController {
     }
     if (intent.type === 'stop') {
       this.pending = undefined;
-      const task = state.tasks.find(
+      const tasks = state.tasks.filter(
         (t) => t.agent === agent && ['running', 'waiting'].includes(t.status),
       );
+      const task =
+        tasks.find((t) => t.id === this.options.selected(agent)) ||
+        (tasks.length === 1 ? tasks[0] : undefined);
+      if (!task && tasks.length > 1) {
+        await this.say(
+          'Several tasks are running. Select a conversation before stopping it.',
+          agent,
+        );
+        return;
+      }
       if (task) {
         await api(`/tasks/${task.id}/stop`, {});
         await this.say(`${agentName(agent)} is stopping.`, agent);
@@ -389,31 +442,46 @@ export class VoiceController {
     this.options.select(agent, task.id);
     await this.say(`${agentName(agent)} is on it.`, agent);
   }
-  private async dictate(agent: Agent) {
-    if (!this.recognizer.stream || !this.recognizer.context) return;
+  private async cloudConversation(agent: Agent) {
+    if (this.cloudTurn || !this.recognizer.stream || !this.recognizer.context) return;
     const epoch = this.epoch;
-    this.recording = new AbortController();
-    this.recognizer.suppress(true);
-    this.patch({ phase: 'recording', heard: '' });
+    this.cloudTurn = true;
     try {
-      const { blob, seconds } = await recordCommand(
-        this.recognizer.stream,
-        this.recognizer.context,
-        this.recording.signal,
-      );
-      this.patch({ phase: 'transcribing' });
-      const text = await transcribe(blob, seconds);
-      if (epoch !== this.epoch) return;
-      this.recording = undefined;
-      this.patch({ heard: text });
-      if (text.trim()) await this.handle(agent, text);
-      else await this.say('I did not catch that. Nothing sent.', agent);
+      do {
+        this.recording = new AbortController();
+        this.recognizer.suppress(true);
+        this.patch({ phase: 'recording', heard: '' });
+        const recording = await (this.options.capture || recordCommand)(
+          this.recognizer.stream,
+          this.recognizer.context,
+          this.recording.signal,
+          Math.max(1000, Math.min(9000, this.awakeUntil - Date.now())),
+        );
+        if (epoch !== this.epoch) return;
+        if (!recording) break;
+        this.patch({ phase: 'transcribing' });
+        const text = await transcribe(recording.blob, recording.seconds, this.recording.signal);
+        if (epoch !== this.epoch) return;
+        this.recording = undefined;
+        this.patch({ heard: text });
+        if (!text.trim()) break;
+        // A recorded wake lets the user change channel during the follow-up window.
+        const wake = detectWake(text);
+        agent = wake?.agent || agent;
+        if (wake && this.pending?.agent !== agent) this.pending = undefined;
+        await this.handle(agent, wake ? wake.command || 'status' : text);
+        if (epoch !== this.epoch) return;
+      } while (this.view.active && this.awakeUntil > Date.now());
+    } catch (error: any) {
+      if (epoch === this.epoch) this.options.notice(error.message);
     } finally {
-      this.recording = undefined;
       if (epoch === this.epoch) {
+        this.recording = undefined;
+        this.cloudTurn = false;
+        this.recognizer.setCommandMode(false);
         this.recognizer.suppress(false);
-        if (['recording', 'transcribing'].includes(this.view.phase))
-          this.patch({ phase: 'listening' });
+        if (!this.speaking) this.patch({ phase: this.pending ? 'confirming' : 'listening' });
+        this.flushQueue();
       }
     }
   }

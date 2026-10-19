@@ -70,6 +70,10 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         params: { threadId, turn: { id: turnId, status: 'completed' } },
       });
     }
+  } else if (m.method === 'turn/steer') {
+    if (!m.params.expectedTurnId || !m.params.input?.[0]?.text)
+      send({ id: m.id, error: { message: 'Missing steering context' } });
+    else send({ id: m.id, result: { turnId: m.params.expectedTurnId } });
   } else if (m.method === 'turn/interrupt') {
     send({ id: m.id, result: {} });
     send({

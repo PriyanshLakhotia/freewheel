@@ -55,6 +55,26 @@ export class AmpAdapter {
       updatedAt: t.updatedAt,
     }));
   }
+  async findPuck(marker: string): Promise<string | undefined> {
+    const { stdout } = await exec(
+      binary,
+      ['threads', 'search', `author:me puck:true "${marker}"`, '--json', '--limit', '1'],
+      { env: this.env(), timeout: 15000, maxBuffer: 512 * 1024 },
+    );
+    const rows = JSON.parse(stdout);
+    return (Array.isArray(rows) ? rows : rows.threads || [])[0]?.id;
+  }
+  async readPuck(id: string) {
+    const { stdout } = await exec(binary, ['threads', 'export', id], {
+      env: this.env(),
+      timeout: 15000,
+      maxBuffer: 12 * 1024 * 1024,
+    });
+    const thread = JSON.parse(stdout);
+    if (thread.agentMode !== 'puck' || !Array.isArray(thread.messages))
+      throw new Error('Not a Puck conversation.');
+    return thread;
+  }
   run(
     id: string,
     cwd: string,

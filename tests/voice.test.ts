@@ -114,3 +114,83 @@ test('voice dispatch requires a wake phrase and confirmation; generic yes never 
     controller.end();
   }
 });
+
+test('OpenAI mode transcribes commands and confirmations, ignores browser command text, and holds updates during dictation', async (t) => {
+  const spoken: string[] = [];
+  const sent: any[] = [];
+  let captures = 0;
+  let transcriptions = 0;
+  let releaseCapture!: () => void;
+  const captureGate = new Promise<void>((resolve) => {
+    releaseCapture = resolve;
+  });
+  t.mock.method(Recognition.prototype, 'start', async function (this: Recognition) {
+    this.stream = {} as MediaStream;
+    this.context = {} as AudioContext;
+  });
+  t.mock.method(Recognition.prototype, 'stop', () => {});
+  t.mock.method(Recognition.prototype, 'suppress', () => {});
+  t.mock.method(Speaker.prototype, 'say', async (text: string) => {
+    spoken.push(text);
+  });
+  t.mock.method(Speaker.prototype, 'stop', () => {});
+  t.mock.method(globalThis, 'fetch', async (url: any, options: any) => {
+    if (String(url).startsWith('/api/audio/transcribe')) {
+      transcriptions++;
+      assert(options.body instanceof Blob);
+      return Response.json({
+        text: transcriptions === 1 ? 'Investigate the slow build' : 'send it',
+      });
+    }
+    sent.push(JSON.parse(options.body));
+    return Response.json({ id: 'new-task' });
+  });
+  const state = {
+    projects: [{ id: 'p', name: 'Project', path: '/tmp/p' }],
+    tasks: [],
+    approvals: [],
+    settings: { ...DEFAULT_SETTINGS, transcription: 'openai' },
+    modelReady: true,
+  } as unknown as State;
+  const selected: string[] = [];
+  const controller = new VoiceController({
+    state: () => state,
+    project: () => 'p',
+    selected: () => undefined,
+    select: (_agent, id) => {
+      if (id) selected.push(id);
+    },
+    view: () => {},
+    notice: () => {},
+    capture: async () => {
+      captures++;
+      if (captures === 1) await captureGate;
+      return captures <= 2
+        ? { blob: new Blob(['fixture'], { type: 'audio/webm' }), seconds: 2 }
+        : undefined;
+    },
+  });
+  t.mock.method(controller as any, 'earcon', () => {});
+  try {
+    await controller.start();
+    const listening = controller.hear('Hey Puck, browser text must never be sent');
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.equal(controller.view.phase, 'recording');
+    controller.announce('Earlier work finished.', 'codex', false, 'earlier-task');
+    assert(!spoken.includes('Earlier work finished.'));
+    releaseCapture();
+    await listening;
+    assert.equal(transcriptions, 2);
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].prompt, 'Investigate the slow build');
+    assert.equal(sent[0].agent, 'amp');
+    assert(spoken.includes('Earlier work finished.'));
+    assert.equal(
+      selected.at(-1),
+      'earlier-task',
+      'spoken updates select their own conversation for follow-ups',
+    );
+  } finally {
+    controller.end();
+  }
+});

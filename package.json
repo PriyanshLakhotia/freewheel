@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@fontsource/ibm-plex-sans": "^5.2.8",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "@openai/codex": "0.163.0",
     "express": "^5.1.0",
     "react": "^19.1.0",

@@ -24,6 +24,7 @@ app.use('/api', express.json({ limit: '48kb' }));
 const agent = z.enum(['amp', 'codex']);
 const settings = z
   .object({
+    ampMode: z.enum(['puck', 'cli']),
     recognition: z.enum(['browser', 'offline']),
     speech: z.enum(['system', 'openai']),
     voice: z.string().max(200),
@@ -51,6 +52,34 @@ app.get('/api/events', (req, res) => {
     hub.off('event', send);
   });
 });
+app.post('/api/puck/login', async (_req, res) => {
+  try {
+    res.json({ url: await hub.puck.beginLogin() });
+  } catch {
+    throw new Error('Puck sign-in could not start. Use port 4318 and try again.');
+  }
+});
+app.post('/api/puck/logout', async (_req, res) => {
+  await hub.disconnectPuck();
+  res.json({ ok: true });
+});
+app.get('/puck/callback', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  try {
+    const input = z
+      .object({ code: z.string().min(1).max(4096), state: z.string().length(64) })
+      .parse(req.query);
+    await hub.puck.finishLogin(input.code, input.state);
+    hub.state.settings.ampMode = 'puck';
+    await hub.connect();
+    res.redirect('/?puck=connected');
+  } catch {
+    res
+      .status(400)
+      .type('text/plain')
+      .send('Puck sign-in failed or expired. Return to Freewheel Connections and try again.');
+  }
+});
 app.post('/api/connect', async (_req, res) => {
   await hub.connect();
   res.json(hub.state);
@@ -63,8 +92,8 @@ app.post('/api/credentials', async (req, res) => {
     throw new Error('An access token cannot contain whitespace.');
   hub.secrets[input.provider] = input.value.trim() || undefined;
   if (input.provider === 'openai' && input.value.trim()) {
-    // Connecting an audio key enables TTS only; transcription remains an explicit choice.
     hub.state.settings.speech = 'openai';
+    hub.state.settings.transcription = 'openai';
   }
   if (input.provider === 'openai' && !input.value.trim()) {
     hub.state.settings.speech = 'system';
@@ -74,8 +103,15 @@ app.post('/api/credentials', async (req, res) => {
   if (input.provider === 'amp') await hub.connect();
   res.json({ ok: true });
 });
-app.post('/api/settings', (req, res) => {
-  Object.assign(hub.state.settings, settings.parse(req.body));
+app.post('/api/settings', async (req, res) => {
+  const input = settings.parse(req.body);
+  if (
+    input.ampMode &&
+    hub.state.tasks.some((t) => t.agent === 'amp' && ['running', 'waiting'].includes(t.status))
+  )
+    throw new Error('Wait for the current Amp reply before changing its connection.');
+  Object.assign(hub.state.settings, input);
+  if (input.ampMode) await hub.connect();
   hub.changed();
   res.json(hub.state.settings);
 });
