@@ -284,10 +284,11 @@ User request:
 ${prompt}`;
         void this.puck
           .send(message, controller.signal)
-          .then(async (text) => {
+          .then(async (reply) => {
             if (task.status !== 'running') return;
-            task.output = this.clean(text).slice(-100000);
-            const watched = await this.puckUpdates.bind(marker);
+            task.externalId = reply.conversationID;
+            task.output = this.clean(reply.reply!).slice(-100000);
+            const watched = await this.puckUpdates.bind(marker, reply.conversationID, reply.reply!);
             if (task.status === 'running') this.finish(task, 'completed', undefined, !watched);
           })
           .catch(() => {

@@ -47,7 +47,7 @@ Use **“Hey Puck”** for your Amp manager. Puck can start and steer several ag
 
 For 10 seconds after a reply, you can continue with the same agent without another wake phrase. The window is configurable. Finished replies wait while you dictate or confirm another task, then play one at a time. A spoken update selects its own conversation for follow-ups.
 
-Puck manages its Amp threads; you can ask for another task without waiting for its agents to finish. Freewheel accepts concurrent Puck messages. New final replies in that Puck conversation are checked through the CLI every 10 seconds, without asking a model for status. The first request links the watcher to your Puck conversation; if the CLI account does not match, Connections reports that automatic replies are unavailable.
+Puck manages its Amp threads; you can ask for another task without waiting for its agents to finish. Freewheel accepts concurrent Puck messages and tracks each queued reply by its own handle. New final replies in that Puck conversation are checked through the CLI every 10 seconds, without asking a model for status. The first request links the watcher to your Puck conversation; if the CLI account does not match, Connections reports that automatic replies are unavailable.
 
 For Codex, “new task” opens a separate conversation while other conversations keep working. Follow-ups to an active conversation steer its running turn. “Stop working” addresses the selected conversation; Freewheel does not guess between several active tasks. Separate conversations still use the chosen local folder, so avoid concurrent edits to the same files. Direct Amp CLI mode permits one active task.
 
@@ -73,7 +73,7 @@ The app defaults to a $2 estimated audio budget per companion process. It reserv
 
 ## Integration boundaries
 
-- **Puck manager connects to the real Puck through `https://ampcode.com/mcp`.** It uses your latest Puck conversation. Sign-in is session-only and currently requires port 4318. Puck manages its own projects, runners and orbs; the local project path is contextual, not an orb filesystem path. Direct Amp mode uses the coding CLI instead.
+- **Puck manager connects to the real Puck through `https://ampcode.com/mcp`.** The first message uses your latest Puck conversation, then Freewheel keeps that manager for the session. Sign-in is session-only and currently requires port 4318. Puck manages its own projects, runners and orbs; the local project path is contextual, not an orb filesystem path. Direct Amp mode uses the coding CLI instead.
 - **Stopping a Puck request stops waiting for its reply.** Puck and delegated agents may continue. Tell Puck which task to stop. Disconnecting Freewheel does not cancel remote work.
 - **Codex runs through a local `codex app-server` process.** It can create and resume saved local conversations; it does not click or send messages through the Codex desktop UI. It cannot reliably arbitrate concurrent work started in another app, so do not run the same conversation in two places.
 - Codex uses workspace-write sandboxing with on-request approvals. Numbered command/file requests can be answered by voice. Additional permission scopes and unsupported prompts are declined, with an explanation. Amp's noninteractive execution can block on permissions; review those tasks in Amp. No allow-all flag is enabled.
@@ -105,6 +105,7 @@ npm run smoke:codex
 npm run smoke:amp -- --continue
 npm run smoke:codex -- --continue
 npm run smoke:concurrency
+npm run smoke:puck
 ```
 
 Useful environment variables: `PORT` (default 4318), `FREEWHEEL_DATA_DIR`, `FREEWHEEL_AMP_BIN`, and `FREEWHEEL_CODEX_BIN`. Existing `AMP_API_KEY` and `OPENAI_API_KEY` environment variables are recognized; the latter is used only by the audio service. The session-only UI fields avoid putting new secrets in shell history. Never commit credentials.

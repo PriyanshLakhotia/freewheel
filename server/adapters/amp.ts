@@ -1,10 +1,27 @@
 import { spawn, execFile, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { promisify } from 'node:util';
+import { accessSync, constants } from 'node:fs';
+import { delimiter, join, normalize } from 'node:path';
 import type { Connection, ThreadChoice } from '../../shared/types.js';
 import { agentEnvironment } from '../agent-env.js';
 const exec = promisify(execFile);
-const binary = process.env.FREEWHEEL_AMP_BIN || 'amp';
+export function ampBinary(env: NodeJS.ProcessEnv = process.env) {
+  if (env.FREEWHEEL_AMP_BIN) return env.FREEWHEEL_AMP_BIN;
+  // npm prepends ancestor node_modules binaries, which can shadow the installed CLI.
+  for (const directory of (env.PATH || '').split(delimiter)) {
+    if (!directory || normalize(directory).endsWith(join('node_modules', '.bin'))) continue;
+    const candidate = join(directory, process.platform === 'win32' ? 'amp.cmd' : 'amp');
+    try {
+      accessSync(candidate, constants.X_OK);
+      return candidate;
+    } catch {
+      /* Try the next PATH entry. */
+    }
+  }
+  return 'amp';
+}
+const binary = ampBinary();
 export class AmpAdapter {
   private processes = new Map<string, ChildProcessWithoutNullStreams>();
   constructor(private key: () => string | undefined) {}
@@ -54,15 +71,6 @@ export class AmpAdapter {
       cwd: t.cwd,
       updatedAt: t.updatedAt,
     }));
-  }
-  async findPuck(marker: string): Promise<string | undefined> {
-    const { stdout } = await exec(
-      binary,
-      ['threads', 'search', `author:me puck:true "${marker}"`, '--json', '--limit', '1'],
-      { env: this.env(), timeout: 15000, maxBuffer: 512 * 1024 },
-    );
-    const rows = JSON.parse(stdout);
-    return (Array.isArray(rows) ? rows : rows.threads || [])[0]?.id;
   }
   async readPuck(id: string) {
     const { stdout } = await exec(binary, ['threads', 'export', id], {

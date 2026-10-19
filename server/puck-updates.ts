@@ -44,43 +44,55 @@ export function puckReplies(thread: PuckThread, marker: string, seen: Set<string
 }
 
 export class PuckUpdates {
-  private thread?: { id: string; marker: string };
+  private thread?: { id: string; markers: Set<string> };
+  private fallbackReplies = new Set<string>();
   private seen = new Set<string>();
   private timer?: NodeJS.Timeout;
   private reading = false;
   private generation = 0;
   constructor(
     private reader: {
-      findPuck: (marker: string) => Promise<string | undefined>;
       readPuck: (id: string) => Promise<PuckThread>;
     },
     private receive: (text: string, threadId: string) => void,
     private status: (ready: boolean) => void,
   ) {}
-  async bind(marker: string): Promise<boolean> {
+  async bind(marker: string, id: string, fallbackReply = ''): Promise<boolean> {
     const generation = this.generation;
+    if (this.thread?.id !== id) {
+      this.thread = { id, markers: new Set() };
+      this.seen.clear();
+      this.fallbackReplies.clear();
+    }
+    this.thread.markers.add(marker);
+    if (!this.timer) this.timer = setInterval(() => void this.poll(), 10000).unref();
     try {
-      const id = await this.reader.findPuck(marker);
-      if (!id) throw new Error('No matching Puck conversation');
       const thread = await this.reader.readPuck(id);
-      if (generation !== this.generation) return false;
-      if (this.thread?.id !== id) {
-        this.thread = { id, marker };
-        this.seen = new Set();
-      }
+      if (generation !== this.generation || this.thread?.id !== id) return false;
       this.deliver(thread);
-      if (!this.timer) this.timer = setInterval(() => void this.poll(), 10000).unref();
       this.status(true);
       return true;
     } catch {
-      if (generation === this.generation) this.status(false);
+      if (generation === this.generation) {
+        if (fallbackReply) this.fallbackReplies.add(fallbackReply.trim());
+        this.status(false);
+      }
       return false;
     }
   }
   private deliver(thread: PuckThread) {
     if (!this.thread || this.thread.id !== thread.id) return;
-    for (const text of puckReplies(thread, this.thread.marker, this.seen))
+    // Replies may finish out of order. Anchor to the earliest request we have bound.
+    const marker = thread.messages.flatMap((m) =>
+      m.role === 'user'
+        ? [...this.thread!.markers].filter((value) => textOf(m).includes(value))
+        : [],
+    )[0];
+    if (!marker) throw new Error('Puck conversation could not be matched to this request.');
+    for (const text of puckReplies(thread, marker, this.seen)) {
+      if (this.fallbackReplies.delete(text.trim())) continue;
       this.receive(text, thread.id);
+    }
   }
   async poll() {
     if (this.reading || !this.thread) return;
@@ -104,5 +116,6 @@ export class PuckUpdates {
     this.timer = undefined;
     this.thread = undefined;
     this.seen.clear();
+    this.fallbackReplies.clear();
   }
 }

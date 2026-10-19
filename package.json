@@ -18,7 +18,8 @@
     "format:check": "prettier --check .",
     "smoke:amp": "tsx scripts/smoke-agents.ts amp",
     "smoke:codex": "tsx scripts/smoke-agents.ts codex",
-    "smoke:concurrency": "tsx scripts/smoke-concurrency.ts"
+    "smoke:concurrency": "tsx scripts/smoke-concurrency.ts",
+    "smoke:puck": "tsx scripts/smoke-puck.ts"
   },
   "dependencies": {
     "@fontsource/ibm-plex-sans": "^5.2.8",

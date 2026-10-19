@@ -1,4 +1,6 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
+import { z } from 'zod';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { auth, type OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
@@ -46,7 +48,6 @@ export class PuckAuth implements OAuthClientProvider {
   }
   consumeState(state: string) {
     const expected = this.nonce;
-    this.nonce = '';
     if (
       !expected ||
       Date.now() > this.expires ||
@@ -54,6 +55,7 @@ export class PuckAuth implements OAuthClientProvider {
       !timingSafeEqual(Buffer.from(state), Buffer.from(expected))
     )
       throw new Error('Puck sign-in expired. Start again from Connections.');
+    this.nonce = '';
   }
   state() {
     return this.nonce;
@@ -88,12 +90,56 @@ export class PuckAuth implements OAuthClientProvider {
   }
 }
 
-export function puckArguments(tool: Tool, message: string): Record<string, unknown> {
+export function puckArguments(
+  tool: Tool,
+  message: string,
+  conversationID?: string,
+): Record<string, unknown> {
   const properties = tool.inputSchema.properties || {};
-  const key = ['message', 'prompt'].find((name) => (properties[name] as any)?.type === 'string');
-  if (!key || (tool.inputSchema.required || []).some((name) => name !== key))
+  const actions = properties.action as { enum?: string[] } | undefined;
+  if (
+    !actions?.enum?.includes('send') ||
+    !actions.enum.includes('read_reply') ||
+    !properties.params
+  )
     throw new Error('Puck has an unsupported input format. No message was sent.');
-  return { [key]: message };
+  return { action: 'send', params: { message, ...(conversationID ? { conversationID } : {}) } };
+}
+
+const conversationID = z
+  .string()
+  .regex(/^T-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+const puckReply = z.object({
+  conversationID,
+  replyHandle: z
+    .string()
+    .regex(/^v1:T-[0-9a-f-]{36}:M-[0-9A-Za-z]{22}$/)
+    .nullable(),
+  status: z.enum(['replied', 'working', 'queued', 'failed']),
+  reply: z.string().nullable(),
+});
+export type PuckReply = z.infer<typeof puckReply>;
+export function readPuckResult(input: unknown): PuckReply {
+  const result = z
+    .object({
+      isError: z.boolean().optional(),
+      structuredContent: z.unknown().optional(),
+      content: z.array(z.object({ type: z.string(), text: z.string().optional() })).optional(),
+    })
+    .parse(input);
+  if (result.isError)
+    throw new Error(
+      'Puck could not complete this request. Check its conversation before retrying.',
+    );
+  const content = result.content;
+  const text = content
+    ?.filter((c) => c.type === 'text')
+    .map((c) => c.text || '')
+    .join('\n');
+  const parsed = puckReply.parse(result.structuredContent ?? JSON.parse(text || '{}'));
+  if (parsed.replyHandle && !parsed.replyHandle.startsWith(`v1:${parsed.conversationID}:`))
+    throw new Error('Puck returned a reply for an unexpected conversation.');
+  return parsed;
 }
 
 export class PuckAdapter {
@@ -101,7 +147,11 @@ export class PuckAdapter {
   private client?: Client;
   private connecting?: Promise<void>;
   private tool?: Tool;
-  constructor(port = 4318) {
+  private conversationId?: string;
+  constructor(
+    port = 4318,
+    private pollInterval = 2000,
+  ) {
     this.auth = new PuckAuth(`http://127.0.0.1:${port}/puck/callback`);
   }
   get connected() {
@@ -160,30 +210,40 @@ export class PuckAdapter {
     });
     return this.connecting;
   }
-  async send(message: string, signal: AbortSignal): Promise<string> {
+  async send(message: string, signal: AbortSignal): Promise<PuckReply> {
     await this.connect();
-    const result = await this.client!.callTool(
-      { name: 'puck', arguments: puckArguments(this.tool!, message) },
-      undefined,
-      { signal, timeout: 300_000, resetTimeoutOnProgress: true, maxTotalTimeout: 600_000 },
-    );
-    if (result.isError)
-      throw new Error(
-        'Puck could not complete this request. Check your Puck conversation before retrying.',
+    const client = this.client!;
+    const bounded = AbortSignal.any([signal, AbortSignal.timeout(10 * 60_000)]);
+    const call = async (args: Record<string, unknown>) =>
+      readPuckResult(
+        await client.callTool({ name: 'puck', arguments: args }, undefined, {
+          signal: bounded,
+          timeout: 60_000,
+          maxTotalTimeout: 60_000,
+        }),
       );
-    const content = result.content as { type: string; text?: string }[];
-    const text = content
-      ?.filter((c) => c.type === 'text')
-      .map((c) => c.text || '')
-      .join('\n')
-      .trim();
-    if (!text) throw new Error('Puck returned no text. Check your Puck conversation.');
-    return text;
+    // A send can enqueue work. Retry only reads, always with this request's handle.
+    let result = await call(puckArguments(this.tool!, message, this.conversationId));
+    this.conversationId = result.conversationID;
+    const handle = result.replyHandle;
+    while (result.status === 'working' || result.status === 'queued') {
+      if (!handle)
+        throw new Error('Puck did not provide a reply handle. Check Amp before retrying.');
+      await delay(this.pollInterval, undefined, { signal: bounded });
+      const next = await call({ action: 'read_reply', params: { replyHandle: handle } });
+      if (next.conversationID !== result.conversationID || next.replyHandle !== handle)
+        throw new Error('Puck returned an unrelated reply.');
+      result = next;
+    }
+    if (result.status !== 'replied' || !result.reply?.trim())
+      throw new Error('Puck did not return a reply. Check its conversation before retrying.');
+    return result;
   }
   async close() {
     const client = this.client;
     this.client = undefined;
     this.tool = undefined;
+    this.conversationId = undefined;
     await client?.close().catch(() => {});
     this.auth.invalidateCredentials('all');
   }
