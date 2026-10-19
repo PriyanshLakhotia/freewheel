@@ -152,7 +152,7 @@ export default function App() {
     if (!state) return;
     await action('test-voice', async () => {
       const speaker = new Speaker(() => state.settings, notify);
-      await speaker.say('Freewheel is ready. Puck and Codex will keep their replies short.');
+      await speaker.say('Freewheel audio test.');
     });
   }
   if (!state)
@@ -168,31 +168,31 @@ export default function App() {
   const inspected = state.tasks.find((t) => t.id === inspect);
   const running = state.tasks.filter((t) => ['running', 'waiting'].includes(t.status));
   const phaseTitle = {
-    off: 'Ready when you are.',
-    starting: 'Getting your mic ready.',
-    listening: 'Listening for a wake phrase.',
-    awake: `${voice.agent ? agentName(voice.agent) : 'Freewheel'} is listening.`,
-    confirming: 'Sound right?',
-    speaking: `${voice.agent ? agentName(voice.agent) : 'Freewheel'} is speaking.`,
-    recording: 'Go ahead. Take your time.',
-    transcribing: 'Transcribing your command.',
-    error: 'Let’s check your mic.',
+    off: '',
+    starting: 'Starting microphone…',
+    listening: 'Listening',
+    awake: `${voice.agent ? agentName(voice.agent) : 'Freewheel'} listening`,
+    confirming: 'Confirm task',
+    speaking: `${voice.agent ? agentName(voice.agent) : 'Freewheel'} speaking`,
+    recording: 'Recording',
+    transcribing: 'Transcribing…',
+    error: 'Microphone unavailable',
   }[voice.phase];
   const phaseHint =
     voice.error ||
     {
-      off: 'Your next task starts with a few words.',
+      off: '',
       starting:
         state.settings.recognition === 'offline'
-          ? 'Loading speech recognition on this Mac.'
-          : 'Allow microphone access when your browser asks.',
-      listening: 'Say “Hey Puck” or “Hey Codex”.',
-      awake: 'Tell it what you need.',
-      confirming: 'Say “send it” to begin, or “cancel”.',
-      speaking: 'Short answers. The details stay here.',
-      recording: 'Pause when you’re finished. Up to 45 seconds.',
-      transcribing: 'Nothing has been sent to an agent yet.',
-      error: 'Open Connections to choose another speech option.',
+          ? 'Loading offline recognition…'
+          : 'Allow microphone access in your browser.',
+      listening: '',
+      awake: '',
+      confirming: 'Say “send it” or “cancel”.',
+      speaking: '',
+      recording: 'Pause to finish. 45-second limit.',
+      transcribing: '',
+      error: 'Check microphone permissions or change recognition in Connections.',
     }[voice.phase];
   return (
     <div className="app-shell">
@@ -208,13 +208,12 @@ export default function App() {
           <Wheel />
           <span>freewheel</span>
         </a>
-        <div className="sidebar-caption">Amp & Codex, by voice.</div>
         <nav aria-label="Main navigation">
           {(
             [
               { id: 'session', label: 'Session', icon: 'radio' },
               { id: 'connections', label: 'Connections', icon: 'settings' },
-              { id: 'guide', label: 'Field guide', icon: 'book' },
+              { id: 'guide', label: 'Help', icon: 'book' },
             ] as const
           ).map((item) => (
             <button
@@ -230,44 +229,21 @@ export default function App() {
         </nav>
         <div className="sidebar-bottom">
           <span className={`connection-dot ${online ? 'connected' : ''}`} />
-          <span>{online ? 'On your Mac' : 'Reconnecting…'}</span>
-          <p>
-            Private by default.
-            <br />
-            Built for listening.
-          </p>
-          <span className="version">Freewheel 0.1</span>
+          <span>{online ? 'Connected' : 'Reconnecting…'}</span>
         </div>
       </aside>
       <main>
-        <header className="topbar">
-          <div className="breadcrumb">
-            {tab === 'session'
-              ? 'Your workspace'
-              : tab === 'connections'
-                ? 'Setup'
-                : 'Voice commands and help'}
-          </div>
-          <div className="local-badge">
-            <span className={`connection-dot ${online ? 'connected' : ''}`} />
-            {online ? 'Local companion connected' : 'Companion disconnected'}
-          </div>
-        </header>
         {!online && (
           <div className="connection-banner" role="alert">
-            Connection lost. Listening has stopped. Your agents may still be working. Reconnecting
-            automatically.
+            Disconnected. Listening stopped; agent tasks may still be running. Reconnecting…
           </div>
         )}
         {tab === 'session' && (
           <>
             <div className="page-heading">
-              <div>
-                <h1>Start a voice session.</h1>
-                <p>Give them a task. Hear what happens next.</p>
-              </div>
+              <h1>Session</h1>
               <div className="workspace">
-                <label htmlFor="project">Working in</label>
+                <label htmlFor="project">Project</label>
                 <div>
                   <select
                     id="project"
@@ -296,7 +272,7 @@ export default function App() {
                   <div className="console-top">
                     <span>
                       <span className={`connection-dot ${voice.active ? 'connected' : ''}`} />
-                      {voice.active ? 'Ride in progress' : 'Off the clock'}
+                      {voice.active ? 'Active' : 'Inactive'}
                     </span>
                     <span className="session-time">
                       {duration(
@@ -365,10 +341,12 @@ export default function App() {
                       </div>
                     </div>
                   </div>
-                  <div className="console-copy" aria-live="polite">
-                    <h2>{phaseTitle}</h2>
-                    <p>{phaseHint}</p>
-                  </div>
+                  {voice.phase !== 'off' && (
+                    <div className="console-copy" aria-live="polite">
+                      <h2>{phaseTitle}</h2>
+                      {phaseHint && <p>{phaseHint}</p>}
+                    </div>
+                  )}
                   <div className="ride-actions">
                     <button
                       className={`primary-button ride-button ${voice.active ? 'end' : ''}`}
@@ -376,7 +354,7 @@ export default function App() {
                       onClick={() => void startRide()}
                     >
                       <Icon name={voice.active ? 'pause' : 'mic'} size={18} />
-                      {voice.active ? 'End ride' : 'Start ride'}
+                      {voice.active ? 'Stop listening' : 'Start listening'}
                     </button>
                     <button
                       className="text-button"
@@ -408,7 +386,7 @@ export default function App() {
                   </div>
                   {(voice.heard || voice.spoken) && voice.active && (
                     <div className="live-caption">
-                      <span>{voice.phase === 'speaking' ? 'You’re hearing' : 'You said'}</span>
+                      <span>{voice.phase === 'speaking' ? 'Reply' : 'You'}</span>
                       <p>
                         {voice.phase === 'speaking' ? voice.spoken : voice.heard || 'Listening…'}
                       </p>
@@ -453,13 +431,7 @@ export default function App() {
                                 : 'Not connected'}
                           </span>
                         </div>
-                        <p>
-                          {active
-                            ? task.activity
-                            : agent === 'amp'
-                              ? 'Your Amp coding agent.'
-                              : 'Your Codex subscription.'}
-                        </p>
+                        {active && <p>{task.activity}</p>}
                         <div className="agent-bottom">
                           <span>
                             {selected[agent] ? 'Continuing conversation' : 'New conversation'}
@@ -481,7 +453,7 @@ export default function App() {
                             onClick={() => void showThreads(agent)}
                             disabled={!connection.connected || busy === 'threads-' + agent}
                           >
-                            {busy === 'threads-' + agent ? 'Loading…' : 'Open a conversation'}
+                            {busy === 'threads-' + agent ? 'Loading…' : 'Conversations'}
                           </button>
                           {active ? (
                             <button
@@ -505,11 +477,6 @@ export default function App() {
                   <div className="awake-label">
                     <span className={`connection-dot ${state.awake ? 'connected' : ''}`} />
                     <span>Keep this Mac awake</span>
-                    <span className="subtle">
-                      {state.awake
-                        ? 'On until you turn it off or quit Freewheel'
-                        : 'For the whole ride'}
-                    </span>
                   </div>
                   <button
                     className={`switch ${state.awake ? 'on' : ''}`}
@@ -524,15 +491,12 @@ export default function App() {
                     <span />
                   </button>
                 </div>
-                <p className="ride-note">
-                  Keep the Mac open and ventilated. Set up audio before moving; keep your
-                  surroundings audible.
-                </p>
+                <p className="ride-note">Requires an open lid.</p>
               </div>
               <aside className="activity-panel">
                 <div className="panel-heading">
-                  <h2>On the go</h2>
-                  <span>{state.tasks.length ? `${running.length} active` : 'Activity'}</span>
+                  <h2>Tasks</h2>
+                  {running.length > 0 && <span>{running.length} active</span>}
                 </div>
                 {state.approvals.map((approval) => (
                   <ApprovalCard key={approval.id} approval={approval} onError={notify} />
@@ -544,10 +508,7 @@ export default function App() {
                       <span />
                       <span />
                     </div>
-                    <h3>No tasks yet.</h3>
-                    <p>
-                      Send your first task. You’ll hear when it’s done, and find the details here.
-                    </p>
+                    <h3>No tasks</h3>
                     <button
                       className="text-button"
                       onClick={() => {
@@ -555,7 +516,7 @@ export default function App() {
                         setComposer('codex');
                       }}
                     >
-                      Type a task instead <Icon name="arrow" size={16} />
+                      New task <Icon name="arrow" size={16} />
                     </button>
                   </div>
                 ) : (
@@ -602,13 +563,6 @@ export default function App() {
                     ))}
                   </div>
                 )}
-                <div className="phrase-note">
-                  <span>Try saying</span>
-                  <p>“Hey Codex, take a look at the failing tests.”</p>
-                  <button onClick={() => setTab('guide')}>
-                    See voice commands <Icon name="arrow" size={15} />
-                  </button>
-                </div>
               </aside>
             </div>
           </>
@@ -640,9 +594,6 @@ export default function App() {
       )}
       {projectDialog && (
         <Dialog title="Add a project" onClose={() => setProjectDialog(false)}>
-          <p className="dialog-intro">
-            Choose a folder on this Mac. Your agents will work in this directory.
-          </p>
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -719,7 +670,7 @@ export default function App() {
               autoFocus
               rows={5}
               maxLength={16000}
-              placeholder="What would you like to get done?"
+              placeholder="Task instructions"
             />
             <div className="form-footer">
               <span>Uses your {composer === 'amp' ? 'Amp account' : 'Codex plan'}.</span>
@@ -740,8 +691,7 @@ export default function App() {
           onClose={() => setThreads(null)}
         >
           <p className="dialog-intro">
-            Continue an idle conversation. For Codex, choose the same project folder and finish any
-            turn running in the desktop app first.
+            Resume idle conversations only. Codex requires the original project folder.
           </p>
           <div className="thread-list">
             {threads.items.length ? (
@@ -940,7 +890,6 @@ function Connections({
       <div className="page-heading">
         <div>
           <h1>Connections</h1>
-          <p>Your agents and audio, set up on this Mac.</p>
         </div>
         <button
           className="secondary-button"
@@ -952,8 +901,7 @@ function Connections({
       </div>
       <section className="settings-section">
         <div className="section-intro">
-          <h2>Your agents</h2>
-          <p>Freewheel uses the accounts already connected on this Mac.</p>
+          <h2>Agents</h2>
         </div>
         <div className="settings-content">
           {(['codex', 'amp'] as const).map((agent) => (
@@ -971,15 +919,10 @@ function Connections({
               <p className="subtle">
                 {agent === 'codex' ? (
                   <>
-                    Uses <code>codex app-server</code> and your existing login. Run{' '}
-                    <code>codex login</code> in Terminal if needed. You can resume saved local
-                    conversations.
+                    Uses your local login. To sign in: <code>codex login</code>.
                   </>
                 ) : (
-                  <>
-                    “Hey Puck” runs an Amp agent through the CLI. It is not Amp’s built-in Puck
-                    assistant. Run <code>amp login</code>, or connect a token below.
-                  </>
+                  <>“Hey Puck” controls the Amp coding agent, not built-in Puck.</>
                 )}
               </p>
               {agent === 'amp' && (
@@ -999,11 +942,7 @@ function Connections({
                       type="password"
                       value={ampKey}
                       onChange={(e) => setAmpKey(e.target.value)}
-                      placeholder={
-                        state.credentials.amp
-                          ? 'Token connected for this session'
-                          : 'Paste your Amp access token'
-                      }
+                      placeholder={state.credentials.amp ? 'Token connected' : 'Access token'}
                       autoComplete="off"
                     />
                     <button className="secondary-button" disabled={!ampKey || busy === 'key-amp'}>
@@ -1028,10 +967,10 @@ function Connections({
       <section className="settings-section">
         <div className="section-intro">
           <h2>Listening</h2>
-          <p>Both options recognize “Hey Puck” and “Hey Codex”. English for now.</p>
+          <p>English</p>
         </div>
         <div className="settings-content">
-          {active && <p className="info-box">End the ride before changing the listening engine.</p>}
+          {active && <p className="info-box">Stop listening to change recognition.</p>}
           <div className="option-grid">
             <button
               disabled={active}
@@ -1041,7 +980,7 @@ function Connections({
               <strong>
                 Browser speech <span>No API key</span>
               </strong>
-              <p>Ready to use in Chrome. Audio may be sent to your browser’s speech service.</p>
+              <p>Chrome. Audio may go to its speech service.</p>
               <span className="selection-ring" />
             </button>
             <button
@@ -1052,26 +991,23 @@ function Connections({
               <strong>
                 On this Mac <span>No API key</span>
               </strong>
-              <p>
-                Vosk runs in your browser. Say the wake phrase, wait for “go ahead,” then speak.
-              </p>
+              <p>Offline. Wait for “go ahead” after the wake phrase.</p>
               <span className="selection-ring" />
             </button>
           </div>
           {!state.modelReady && (
             <div className="install-row">
-              <p>A one-time 40 MB model download enables offline recognition.</p>
               <button
                 className="secondary-button"
                 disabled={busy === 'model'}
                 onClick={() =>
                   void action('model', async () => {
                     await api('/model', {});
-                    notify('Offline recognition is ready. Select “On this Mac” above.');
+                    notify('Model installed. Select “On this Mac”.');
                   })
                 }
               >
-                {busy === 'model' ? 'Downloading model…' : 'Install offline speech'}
+                {busy === 'model' ? 'Downloading…' : 'Download offline model · 40 MB'}
               </button>
             </div>
           )}
@@ -1092,16 +1028,14 @@ function Connections({
               >
                 {busy === 'selftest' ? 'Checking recognition…' : 'Check offline recognition'}
               </button>
-              <p className="subtle">
-                Tests synthetic wake phrases and ordinary speech. Does not access your microphone.
-              </p>
+              <p className="subtle">Synthetic audio; microphone stays off.</p>
               {selftest && <pre>{selftest}</pre>}
             </div>
           )}
           <div className="setting-row">
             <div>
               <h3>Read back before sending</h3>
-              <p>Say “send it” after the task is read back to you.</p>
+              <p>Confirm with “send it”.</p>
             </div>
             <button
               className={`switch ${state.settings.confirmTasks ? 'on' : ''}`}
@@ -1129,7 +1063,6 @@ function Connections({
       <section className="settings-section">
         <div className="section-intro">
           <h2>Speaking</h2>
-          <p>Brief answers, with the full result kept in the task details.</p>
         </div>
         <div className="settings-content">
           <label className="inline-setting">
@@ -1179,16 +1112,13 @@ function Connections({
             <Icon name="volume" size={16} />
             Test sound
           </button>
-          <p className="subtle">
-            All voices are synthesized. Recognition pauses while Freewheel speaks, so it cannot hear
-            its own replies. Keep answers short; use Stop speaking to interrupt playback.
-          </p>
+          <p className="subtle">Synthesized voices. Listening pauses during playback.</p>
         </div>
       </section>
       <section className="settings-section">
         <div className="section-intro">
-          <h2>Optional cloud audio</h2>
-          <p>Separate from your ChatGPT subscription. Only pay for the audio you use.</p>
+          <h2>Cloud audio</h2>
+          <p>Optional. Billed separately.</p>
         </div>
         <div className="settings-content">
           <form
@@ -1205,7 +1135,7 @@ function Connections({
                 type="password"
                 value={openaiKey}
                 onChange={(e) => setOpenaiKey(e.target.value)}
-                placeholder={state.credentials.openai ? 'Key connected for this session' : 'sk-…'}
+                placeholder={state.credentials.openai ? 'Key connected' : 'sk-…'}
                 autoComplete="off"
               />
               <button className="secondary-button" disabled={!openaiKey || busy === 'key-openai'}>
@@ -1222,10 +1152,7 @@ function Connections({
               )}
             </div>
           </form>
-          <p className="subtle">
-            Keys stay in the companion’s memory until it quits. They are never saved in your
-            browser, project, or task history.
-          </p>
+          <p className="subtle">Keys stay in memory until Freewheel quits.</p>
           <label className="inline-setting">
             Command transcription
             <select
@@ -1239,12 +1166,11 @@ function Connections({
               <option value="openai">OpenAI after the wake phrase</option>
             </select>
           </label>
-          <p className="subtle">
-            With cloud transcription: say the wake phrase, wait for “go ahead,” then dictate. A
-            pause ends the recording. Background listening still uses your selected engine.
-          </p>
+          {state.settings.transcription === 'openai' && (
+            <p className="subtle">Speak after “go ahead”; pause to finish recording.</p>
+          )}
           <label className="inline-setting">
-            Audio budget per companion session
+            Session budget
             <div className="budget-field">
               <span>$</span>
               <input
@@ -1269,20 +1195,17 @@ function Connections({
             </strong>
           </div>
           <p className="subtle">
-            An app-side estimate, not a provider billing cap. Coding usage is separate. Set a
-            spending limit in your OpenAI account too.
+            Resets on restart. Not a provider billing cap; coding costs are separate.
           </p>
         </div>
       </section>
       <section className="settings-section">
         <div className="section-intro">
-          <h2>On this Mac</h2>
-          <p>Your projects, settings and last 200 tasks are saved locally.</p>
+          <h2>History</h2>
         </div>
         <div className="settings-content">
           <p className="subtle">
-            History is stored in <code>~/.local/share/freewheel</code>. Clearing it here does not
-            delete your Amp or Codex conversations.
+            Last 200 tasks. Clearing leaves Amp and Codex conversations intact.
           </p>
           <button
             className="secondary-button"
@@ -1305,63 +1228,35 @@ function Connections({
 
 function Guide({ onStart }: { onStart: () => void }) {
   const commands = [
-    ['Hey Puck, …', 'Talk to your Amp agent.'],
-    ['Hey Codex, …', 'Talk to Codex.'],
-    ['Send it / cancel', 'Send or discard the task that was just read back.'],
-    ['Status', 'Hear what your agents are working on.'],
-    ['Say that again', 'Repeat the last spoken update.'],
-    ['Stop working', 'Interrupt the addressed agent.'],
-    ['New task', 'Start a fresh conversation on this channel.'],
-    ['Approve three / deny three', 'Answer the matching Codex permission request.'],
-    ['Quiet / speak again', 'Hold or resume completion announcements.'],
+    ['Hey Puck / Hey Codex', 'Choose an agent.'],
+    ['Send it / cancel', 'Confirm or discard a task.'],
+    ['Status', 'Check running tasks.'],
+    ['Say that again', 'Repeat the last update.'],
+    ['Stop working', 'Stop the addressed agent.'],
+    ['New task', 'Start a new conversation.'],
+    ['Approve three / deny three', 'Answer Codex request 3.'],
+    ['Quiet / speak again', 'Pause or resume completion announcements.'],
   ];
   return (
     <div className="guide-page">
       <div className="page-heading">
-        <div>
-          <h1>Using Freewheel</h1>
-          <p>A few things to know before your first ride.</p>
-        </div>
+        <h1>Help</h1>
+        <button className="secondary-button" onClick={onStart}>
+          Back to session
+        </button>
       </div>
-      <section className="guide-start">
-        <div>
-          <h2>
-            Set up at your desk.
-            <br />
-            Keep going by voice.
-          </h2>
-          <p>
-            Connect your earphones to the Mac. Select them as the input and output in macOS Sound
-            settings, choose a project, and test the sound. Start your ride and grant microphone
-            access.
-          </p>
-          <button className="primary-button" onClick={onStart}>
-            Back to session
-            <Icon name="arrow" size={16} />
-          </button>
-        </div>
-        <div className="example-conversation">
-          <div>
-            <span>You</span>
-            <p>Hey Codex, look into why the checkout tests are failing.</p>
-          </div>
-          <div>
-            <span>Codex</span>
-            <p>In your project, investigate the failing checkout tests. Say send it, or cancel.</p>
-          </div>
-          <div>
-            <span>You</span>
-            <p>Send it.</p>
-          </div>
-          <small>Example conversation</small>
-        </div>
+      <section className="guide-section">
+        <h2>Setup</h2>
+        <p>
+          Select your earphones in macOS Sound settings, choose a project, test sound, then start
+          listening. Allow microphone access.
+        </p>
       </section>
       <section className="guide-section">
-        <h2>A small vocabulary goes a long way.</h2>
+        <h2>Commands</h2>
         <p>
-          Start with a wake phrase. For a few seconds after a reply, you can answer the same agent
-          without repeating its name. With offline listening or cloud transcription, pause after the
-          wake phrase and wait for “go ahead” before giving the task.
+          Say a wake phrase, wait for “go ahead,” then speak. You can follow up without a wake
+          phrase during the configured window.
         </p>
         <div className="command-table">
           {commands.map(([command, meaning]) => (
@@ -1373,58 +1268,30 @@ function Guide({ onStart }: { onStart: () => void }) {
         </div>
       </section>
       <section className="guide-section practical">
-        <h2>What to expect</h2>
+        <h2>Limits</h2>
         <div>
-          <h3>Your subscriptions do the coding.</h3>
+          <h3>Mac and microphone</h3>
           <p>
-            Codex uses your existing login and its usual plan limits. Amp uses your selected
-            account, plan, model routing and credits. Freewheel adds no charge for browser or
-            offline recognition and system voices.
+            Keep the lid open and the Mac ventilated. Screen locking, tab suspension and Bluetooth
+            changes can stop recognition. Test your headset while stationary.
           </p>
         </div>
         <div>
-          <h3>Cloud speech is optional.</h3>
+          <h3>Tasks and permissions</h3>
           <p>
-            OpenAI mini transcription is estimated at $0.003 per recorded minute. Freewheel’s TTS-1
-            voice is estimated at $15 per million characters. A ride with 15 minutes of dictated
-            commands and 9,000 spoken characters is about $0.18 in audio, plus coding usage.
+            Stopping listening leaves tasks running. Use “stop working” to cancel. Answer Codex
+            approvals by number; review blocked Amp tasks in Amp.
+          </p>
+        </div>
+        <div>
+          <h3>Cost</h3>
+          <p>
+            Normal Codex limits and Amp credits apply. Browser/offline speech adds no API charge.
+            Optional OpenAI audio: $0.003 per dictated minute and $15 per million spoken characters.
           </p>
           <a href="https://developers.openai.com/api/docs/pricing" target="_blank" rel="noreferrer">
             OpenAI pricing
           </a>
-        </div>
-        <div>
-          <h3>The Mac still needs to stay awake.</h3>
-          <p>
-            The switch keeps the display and system awake while Freewheel runs. It does not override
-            lid-close sleep. Keep the lid open and the Mac ventilated, and use a reliable internet
-            connection for your agents.
-          </p>
-        </div>
-        <div>
-          <h3>Voice is a conversation, not a background guarantee.</h3>
-          <p>
-            Browser recognition can stop when a tab is suspended. Freewheel retries, but locked
-            screens, wind, Bluetooth changes and network loss need testing with your setup. Offline
-            recognition avoids the browser speech service, but may mishear names or technical
-            language. Keep read-back enabled.
-          </p>
-        </div>
-        <div>
-          <h3>Permissions remain yours.</h3>
-          <p>
-            Codex requests can be answered by number. Amp’s noninteractive CLI cannot present every
-            permission prompt; a blocked task tells you to review it in Amp. Freewheel never enables
-            an allow-all mode.
-          </p>
-        </div>
-        <div>
-          <h3>Prepare before moving.</h3>
-          <p>
-            Use a stationary bike for your first test. Outside, keep your surroundings audible and
-            stop somewhere safe for anything that needs the screen. You can end listening without
-            cancelling agents already working.
-          </p>
         </div>
       </section>
     </div>

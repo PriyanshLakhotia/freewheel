@@ -11,7 +11,7 @@ Freewheel runs on your Mac: a small local companion controls your coding agents 
 Requires macOS, Node.js 22+, Chrome, an installed [Amp CLI](https://ampcode.com/docs), and access to Codex through your ChatGPT account. A compatible Codex CLI is pinned as a project dependency; your global installation is left alone.
 
 ```sh
-git clone git@github.com:PriyanshLakhotia/freewheel.git
+git clone https://github.com/PriyanshLakhotia/freewheel.git
 cd freewheel
 npm ci
 npx --no-install codex login  # only if this Mac is not already signed in
@@ -26,7 +26,7 @@ Open **http://127.0.0.1:4318 in Chrome**. On later runs, double-click `Freewheel
 2. On **Session**, add the absolute folder path of your project and select it. New conversations run in that directory.
 3. Connect your earphones. Choose their microphone and output in macOS Sound settings. Use **Test sound**.
 4. Enable **Keep this Mac awake** if needed. Keep the lid open: this control does not defeat lid-close sleep.
-5. Press **Start ride** and allow microphone access. First try the full interaction while stationary.
+5. Press **Start listening** and allow microphone access. First try the full interaction while stationary.
 
 ## Talk
 
@@ -46,7 +46,7 @@ Use **“Hey Puck”** for Amp. With browser recognition you can also include a 
 
 For 10 seconds after a reply, you can continue with the same agent without another wake phrase. The window is configurable. Each channel remembers its selected conversation; use “new task” to start fresh. Amp and Codex can each run one task concurrently. Both work in the selected folder, so avoid asking them to edit the same files at once.
 
-Agents are instructed to lead with a spoken briefing of at most 55 words. Playback is bounded, and full output remains in task details. **End ride** releases the microphone but lets agent tasks finish. **Stop task** cancels a task. Recognition pauses during speech playback to avoid feedback; voice interruption during playback is not supported, and the **Stop speaking** button is available.
+Agents are instructed to lead with a spoken briefing of at most 55 words. Playback is bounded, and full output remains in task details. **Stop listening** releases the microphone but lets agent tasks finish. **Stop task** cancels a task. Recognition pauses during speech playback to avoid feedback; voice interruption during playback is not supported, and the **Stop speaking** button is available.
 
 The typed composer, conversation picker, task details, follow-ups, and permission cards work without starting a voice session. Resume only idle conversations. For Codex, select their original project folder and finish any turn running in the desktop app first.
 

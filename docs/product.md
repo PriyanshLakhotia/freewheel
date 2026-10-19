@@ -27,7 +27,7 @@ Freewheel                     Session / Connections / Guide
 ---------------------------------------------------------
 Workspace                     Session duration
 [ speaking / listening instrument ]   [ Activity           ]
-[ Start ride                      ]   [ Full task details   ]
+[ Start listening                 ]   [ Full task details   ]
 [ Puck channel ] [ Codex channel  ]   [                    ]
 ```
 

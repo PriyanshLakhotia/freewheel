@@ -1098,6 +1098,9 @@ textarea::placeholder {
 .guide-section {
   padding: 40px 0 0;
 }
+.guide-page > .guide-section:first-of-type {
+  padding-top: 0;
+}
 .guide-section h2 {
   font-size: 21px;
   letter-spacing: -0.4px;
