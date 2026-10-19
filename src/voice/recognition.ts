@@ -1,11 +1,18 @@
 import type { Model, KaldiRecognizer } from 'vosk-browser';
 import { loadOfflineModel } from './model';
-import { WAKE_GRAMMAR, detectWake } from '../../shared/speech';
+import {
+  WAKE_GRAMMAR,
+  INTERRUPT_GRAMMAR,
+  detectWake,
+  interruptionPhrase,
+} from '../../shared/speech';
 export interface RecognitionCallbacks {
   final: (text: string) => void;
   partial: (text: string) => void;
   error: (message: string) => void;
   level: (value: number) => void;
+  interrupt: () => void;
+  warning: (message: string) => void;
 }
 export class Recognition {
   stream?: MediaStream;
@@ -21,22 +28,32 @@ export class Recognition {
   private restartTimer?: ReturnType<typeof setTimeout>;
   private failures = 0;
   private commandMode = false;
-  constructor(private callbacks: RecognitionCallbacks) {}
+  private playback?: string;
+  private generation = 0;
+  get canInterrupt() {
+    return !!this.model;
+  }
+  constructor(
+    private callbacks: RecognitionCallbacks,
+    private loadModel = loadOfflineModel,
+  ) {}
   static browserSupported() {
     return !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
   }
-  async start(engine: 'browser' | 'offline') {
+  async start(engine: 'browser' | 'offline', localInterruptions = false) {
+    const generation = ++this.generation;
     this.active = true;
     this.suppressed = false;
     this.failures = 0;
     this.commandMode = false;
+    this.playback = undefined;
     try {
       if (engine === 'browser' && !Recognition.browserSupported()) {
         throw new Error(
           'Use Chrome for browser speech, or choose offline recognition in Connections.',
         );
       }
-      this.stream = await navigator.mediaDevices.getUserMedia({
+      const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
@@ -45,10 +62,11 @@ export class Recognition {
         },
         video: false,
       });
-      if (!this.active) {
-        this.stream.getTracks().forEach((t) => t.stop());
+      if (!this.active || generation !== this.generation) {
+        stream.getTracks().forEach((t) => t.stop());
         return;
       }
+      this.stream = stream;
       this.stream.getAudioTracks()[0]?.addEventListener('ended', () => {
         if (this.active) {
           this.callbacks.error(
@@ -57,8 +75,12 @@ export class Recognition {
           this.stop();
         }
       });
-      this.context = new AudioContext();
-      await this.context.resume();
+      const context = (this.context = new AudioContext());
+      await context.resume();
+      if (!this.active || generation !== this.generation) {
+        if (context.state !== 'closed') await context.close();
+        return;
+      }
       this.source = this.context.createMediaStreamSource(this.stream);
       const meter = this.context.createAnalyser();
       meter.fftSize = 256;
@@ -73,42 +95,72 @@ export class Recognition {
         this.frame = requestAnimationFrame(tick);
       };
       tick();
-      if (engine === 'offline') await this.offline();
-      else this.webSpeech();
+      if (engine === 'offline' || localInterruptions) {
+        try {
+          await this.local(engine === 'offline', generation);
+        } catch (error) {
+          if (generation !== this.generation) return;
+          if (engine === 'offline') throw error;
+          this.callbacks.warning(
+            'Local stop detection could not load. The Stop speaking button is still available.',
+          );
+        }
+      }
+      if (!this.active || generation !== this.generation) return;
+      if (engine === 'browser') this.webSpeech();
     } catch (error) {
-      this.stop();
+      if (generation === this.generation) this.stop();
       throw error;
     }
   }
-  private async offline() {
-    this.model = await loadOfflineModel();
-    if (!this.active) {
-      this.model.terminate();
+  private offlineCommands = false;
+  private async local(offlineCommands: boolean, generation: number) {
+    const model = await this.loadModel();
+    if (!this.active || generation !== this.generation) {
+      model.terminate();
       return;
     }
+    this.model = model;
+    this.offlineCommands = offlineCommands;
     this.makeRecognizer();
     this.processor = this.context!.createScriptProcessor(4096, 1, 1);
     this.processor.onaudioprocess = (event) => {
-      if (!this.suppressed && this.active) this.recognizer?.acceptWaveform(event.inputBuffer);
+      if (this.active && (!this.suppressed || this.playback !== undefined))
+        this.recognizer?.acceptWaveform(event.inputBuffer);
     };
     this.source!.connect(this.processor);
     this.processor.connect(this.context!.destination);
   }
   private makeRecognizer() {
     if (!this.model || !this.context || !this.active) return;
+    const playback = this.playback;
+    const interruptOnly = playback !== undefined;
+    if (!interruptOnly && (this.suppressed || !this.offlineCommands)) return;
+    const commandMode = this.commandMode;
+    let interrupted = false;
     const recognizer = (this.recognizer = new this.model.KaldiRecognizer(
       this.context.sampleRate,
-      this.commandMode ? undefined : WAKE_GRAMMAR,
+      interruptOnly ? INTERRUPT_GRAMMAR : commandMode ? undefined : WAKE_GRAMMAR,
     ));
+    const tryInterrupt = (text: string) => {
+      if (!interrupted && interruptionPhrase(text, playback || '')) {
+        interrupted = true;
+        this.callbacks.interrupt();
+      }
+    };
     recognizer.on('result', (message) => {
       if (
         this.recognizer === recognizer &&
         message.event === 'result' &&
-        !this.suppressed &&
         this.active &&
         message.result.text
       ) {
-        if (this.commandMode) this.callbacks.final(message.result.text);
+        if (interruptOnly) {
+          tryInterrupt(message.result.text);
+          return;
+        }
+        if (this.suppressed) return;
+        if (commandMode) this.callbacks.final(message.result.text);
         else {
           const wake = detectWake(message.result.text.replace(/\[unk\]/g, '').trim());
           if (wake) this.callbacks.final(wake.agent === 'amp' ? 'hey puck' : 'hey codex');
@@ -116,17 +168,14 @@ export class Recognition {
       }
     });
     recognizer.on('partialresult', (message) => {
-      if (
-        this.recognizer === recognizer &&
-        message.event === 'partialresult' &&
-        !this.suppressed &&
-        this.active
-      )
-        this.callbacks.partial(message.result.partial);
+      if (this.recognizer === recognizer && message.event === 'partialresult' && this.active) {
+        if (interruptOnly) tryInterrupt(message.result.partial);
+        else if (!this.suppressed) this.callbacks.partial(message.result.partial);
+      }
     });
     recognizer.on('error', () => {
       if (this.recognizer === recognizer)
-        this.callbacks.error('Offline recognition stopped. End the ride and start again.');
+        this.callbacks.error('Local recognition stopped. Start listening again.');
     });
   }
   setCommandMode(enabled: boolean) {
@@ -136,6 +185,12 @@ export class Recognition {
     this.recognizer = undefined;
     if (this.model && !this.suppressed) this.makeRecognizer();
   }
+  listenForInterruptions(text?: string) {
+    this.playback = text;
+    this.recognizer?.remove();
+    this.recognizer = undefined;
+    this.makeRecognizer();
+  }
   private webSpeech() {
     const Constructor =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -143,11 +198,12 @@ export class Recognition {
       throw new Error(
         'This browser does not support live speech. Use Chrome, or install offline recognition in Connections.',
       );
-    this.browser = new Constructor();
+    const browser = (this.browser = new Constructor());
     this.browser.continuous = true;
     this.browser.interimResults = true;
     this.browser.lang = 'en-US';
     this.browser.onresult = (event: any) => {
+      if (this.browser !== browser) return;
       this.failures = 0;
       for (let i = event.resultIndex; i < event.results.length; i++) {
         if (this.suppressed || !this.active) return;
@@ -157,6 +213,7 @@ export class Recognition {
       }
     };
     this.browser.onerror = (event: any) => {
+      if (this.browser !== browser) return;
       if (
         !this.active ||
         this.suppressed ||
@@ -176,7 +233,9 @@ export class Recognition {
         this.stop();
       }
     };
-    this.browser.onend = () => this.scheduleRestart();
+    this.browser.onend = () => {
+      if (this.browser === browser) this.scheduleRestart();
+    };
     this.browser.start();
   }
   private scheduleRestart() {
@@ -197,6 +256,7 @@ export class Recognition {
   suppress(value: boolean) {
     this.suppressed = value;
     if (value) {
+      this.playback = undefined;
       clearTimeout(this.restartTimer);
       this.browser?.abort();
       // Discard buffered speech before output, so it cannot be replayed as a new command.
@@ -208,7 +268,9 @@ export class Recognition {
     }
   }
   stop() {
+    this.generation++;
     this.active = false;
+    this.playback = undefined;
     clearTimeout(this.restartTimer);
     cancelAnimationFrame(this.frame);
     this.browser?.abort();

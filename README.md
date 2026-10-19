@@ -34,19 +34,20 @@ Open **http://127.0.0.1:4318 in Chrome**. On later runs, double-click `Freewheel
 
 Use **“Hey Puck”** for Amp. With browser recognition you can also include a command in the same utterance as the wake phrase. With offline recognition or optional cloud transcription, pause after the wake phrase and wait for “go ahead.”
 
-| Say                            | Result                                                                       |
-| ------------------------------ | ---------------------------------------------------------------------------- |
-| “Hey Codex, status”            | Hear which agents are working or waiting.                                    |
-| “Send it” / “Cancel”           | Send or discard the task just read back.                                     |
-| “Say that again”               | Repeat the last spoken update.                                               |
-| “Stop working”                 | Interrupt the addressed agent.                                               |
-| “New task”                     | Begin a fresh conversation on that agent's channel.                          |
-| “Approve three” / “Deny three” | Answer that numbered Codex permission request.                               |
-| “Quiet” / “Speak again”        | Hold or resume completion announcements. Requests for attention still speak. |
+| Say                             | Result                                                                       |
+| ------------------------------- | ---------------------------------------------------------------------------- |
+| “Hey Codex, status”             | Hear which agents are working or waiting.                                    |
+| “Send it” / “Cancel”            | Send or discard the task just read back.                                     |
+| “Say that again”                | Repeat the last spoken update.                                               |
+| “Pause audio” / “Stop speaking” | Stop the current reply; the agent keeps working. Requires the local model.   |
+| “Stop working”                  | Interrupt the addressed agent.                                               |
+| “New task”                      | Begin a fresh conversation on that agent's channel.                          |
+| “Approve three” / “Deny three”  | Answer that numbered Codex permission request.                               |
+| “Quiet” / “Speak again”         | Hold or resume completion announcements. Requests for attention still speak. |
 
 For 10 seconds after a reply, you can continue with the same agent without another wake phrase. The window is configurable. Each channel remembers its selected conversation; use “new task” to start fresh. Amp and Codex can each run one task concurrently. Both work in the selected folder, so avoid asking them to edit the same files at once.
 
-Agents are instructed to lead with a spoken briefing of at most 55 words. Playback is bounded, and full output remains in task details. **Stop listening** releases the microphone but lets agent tasks finish. **Stop task** cancels a task. Recognition pauses during speech playback to avoid feedback; voice interruption during playback is not supported, and the **Stop speaking** button is available.
+Agents are instructed to lead with a spoken briefing of at most 55 words. Playback is bounded, and full output remains in task details. **Stop listening** releases the microphone but lets agent tasks finish. **Stop task** cancels a task. During playback, a local recognizer listens only for **“pause audio”** or **“stop speaking”**. It stops the voice and clears queued announcements without cancelling agent work. Download the local model in Connections and start listening to enable it; it works with either listening engine and costs no API usage. The **Stop speaking** button also works.
 
 The typed composer, conversation picker, task details, follow-ups, and permission cards work without starting a voice session. Resume only idle conversations. For Codex, select their original project folder and finish any turn running in the desktop app first.
 
@@ -56,13 +57,13 @@ The typed composer, conversation picker, task details, follow-ups, and permissio
 | ------------------------------------------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------- |
 | Browser recognition + system voice (default)            | None from Freewheel       | Chrome's speech service may receive microphone audio. Network and browser lifecycle affect availability. |
 | Vosk on this Mac + system voice                         | None                      | One-time ~40 MB model download. English only; technical dictation is less accurate.                      |
-| Optional OpenAI command transcription and/or Nova voice | Usage based               | An OpenAI API key with separate billing is required. You can enable either independently.                |
+| Optional OpenAI command transcription and/or Nova voice | Usage based               | Connecting a key enables Nova voice. Command transcription is a separate opt-in.                         |
 
-Install the offline model in Connections, then use **Check offline recognition** to run synthetic wake-phrase and ordinary-speech checks without opening the microphone. The offline model remains outside the repository. Choosing offline listening keeps that recognition on your Mac; agents still need internet. If you enable cloud transcription, recorded commands go to OpenAI after the wake phrase.
+Download the local model in Connections, then use **Test local recognition** to check wake phrases, stop phrases and ordinary speech without opening the microphone. The offline model remains outside the repository. Choosing offline listening keeps that recognition on your Mac; agents still need internet. If you enable cloud transcription, recorded commands go to OpenAI after the wake phrase. Start with voice output alone; try OpenAI transcription if technical dictation is inaccurate. Its vocabulary prompt includes agent and coding terms, but outdoor accuracy still needs testing with your microphone.
 
-For paid audio, Freewheel uses `gpt-4o-mini-transcribe` at **$0.003 per recorded minute** and `tts-1` at **$15 per million spoken characters**. An hour containing 15 minutes of dictated commands and 9,000 spoken characters would cost about **$0.18** for audio. Twenty such hours would be about **$3.60**. Duration alone does not determine cost; idle listening is not sent to the paid OpenAI endpoint. Prices checked 19 October 2026; see [OpenAI pricing](https://developers.openai.com/api/docs/pricing).
+For paid audio, Freewheel uses `gpt-4o-mini-transcribe` at **$0.003 per recorded minute** and `tts-1` at **$15 per million spoken characters**. 9,000 spoken characters cost about **$0.14** for voice alone. Adding 15 minutes of dictated commands brings that to about **$0.18**. Twenty such hours would be about **$3.60**. Duration alone does not determine cost; idle listening is not sent to the paid OpenAI endpoint. Prices checked 19 October 2026; see [OpenAI pricing](https://developers.openai.com/api/docs/pricing).
 
-Codex coding uses the existing login and the account's normal usage limits. Amp uses its account's plan, routing and credits; Freewheel does not turn either into unlimited usage. See [Codex app-server authentication](https://developers.openai.com/codex/app-server) and [Amp pricing](https://ampcode.com/docs/pricing). The optional audio API is separate from ChatGPT billing.
+**Coding never uses the OpenAI audio key.** Codex requires ChatGPT sign-in and uses that subscription's limits; API-key coding is rejected. The companion strips OpenAI API credentials from both agent processes. Amp uses its account's plan, routing and credits; Freewheel does not turn either into unlimited usage. See [Codex app-server authentication](https://developers.openai.com/codex/app-server) and [Amp pricing](https://ampcode.com/docs/pricing). The optional audio API is separate from ChatGPT billing.
 
 The app defaults to a $2 estimated audio budget per companion process. It reserves estimated spend before requests, including failed requests conservatively. This is an application-side guard, not a provider billing cap. Spend resets when the companion restarts.
 
@@ -98,6 +99,6 @@ npm run smoke:amp -- --continue
 npm run smoke:codex -- --continue
 ```
 
-Useful environment variables: `PORT` (default 4318), `FREEWHEEL_DATA_DIR`, `FREEWHEEL_AMP_BIN`, and `FREEWHEEL_CODEX_BIN`. Existing `AMP_API_KEY` and `OPENAI_API_KEY` environment variables are recognized, but the session-only UI fields avoid putting new secrets in shell history. Never commit credentials.
+Useful environment variables: `PORT` (default 4318), `FREEWHEEL_DATA_DIR`, `FREEWHEEL_AMP_BIN`, and `FREEWHEEL_CODEX_BIN`. Existing `AMP_API_KEY` and `OPENAI_API_KEY` environment variables are recognized; the latter is used only by the audio service. The session-only UI fields avoid putting new secrets in shell history. Never commit credentials.
 
 See [research and protocol decisions](docs/research.md), [verification record](docs/testing.md), and [product direction](docs/product.md).

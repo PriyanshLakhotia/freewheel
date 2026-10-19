@@ -5,12 +5,15 @@ export class Speaker {
   private audio?: HTMLAudioElement;
   private generation = 0;
   private finish?: () => void;
+  private request?: AbortController;
   constructor(
     private settings: () => Settings,
     private onFallback: (text: string) => void,
   ) {}
   stop() {
     this.generation++;
+    this.request?.abort();
+    this.request = undefined;
     this.audio?.pause();
     this.audio = undefined;
     window.speechSynthesis?.cancel();
@@ -23,7 +26,8 @@ export class Speaker {
     const spoken = speechText(text, 80);
     if (this.settings().speech === 'openai') {
       try {
-        const blob = await speechAudio(spoken);
+        this.request = new AbortController();
+        const blob = await speechAudio(spoken, this.request.signal);
         if (generation !== this.generation) return;
         const url = URL.createObjectURL(blob);
         const audio = (this.audio = new Audio(url));
@@ -54,7 +58,10 @@ export class Speaker {
       voices.find((v) => v.lang.startsWith('en') && v.localService) ||
       null;
     await new Promise<void>((resolve) => {
-      const timeout = setTimeout(resolve, 35000);
+      const timeout = setTimeout(() => {
+        if (generation === this.generation) window.speechSynthesis.cancel();
+        resolve();
+      }, 35000);
       const done = () => {
         clearTimeout(timeout);
         resolve();

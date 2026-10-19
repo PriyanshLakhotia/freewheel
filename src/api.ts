@@ -19,11 +19,12 @@ export async function api<T = any>(
   if (!res.ok) throw new Error(data.error || 'The companion could not complete this request.');
   return data;
 }
-export async function speechAudio(text: string): Promise<Blob> {
+export async function speechAudio(text: string, signal?: AbortSignal): Promise<Blob> {
   const res = await fetch('/api/audio/speech', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Freewheel-CSRF': csrf },
     body: JSON.stringify({ text }),
+    signal,
   });
   if (!res.ok) throw new Error((await res.json()).error);
   return res.blob();

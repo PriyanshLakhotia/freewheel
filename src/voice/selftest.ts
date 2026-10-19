@@ -1,14 +1,30 @@
-import { detectWake, WAKE_GRAMMAR } from '../../shared/speech';
+import {
+  detectWake,
+  WAKE_GRAMMAR,
+  INTERRUPT_GRAMMAR,
+  interruptionPhrase,
+} from '../../shared/speech';
 import { loadOfflineModel } from './model';
 export async function checkOfflineSpeech(): Promise<string> {
   const model = await loadOfflineModel();
   const context = new AudioContext({ sampleRate: 16000 });
   const results: string[] = [];
   try {
-    for (const agent of ['codex', 'puck', 'ambient']) {
-      const response = await fetch(`/diagnostics/${agent}.wav`);
+    const cases = [
+      { name: 'codex', expected: 'codex', stop: false },
+      { name: 'puck', expected: 'amp', stop: false },
+      { name: 'ambient', expected: undefined, stop: false },
+      { name: 'pause', expected: 'pause audio', stop: true },
+      { name: 'stop', expected: 'stop speaking', stop: true },
+      { name: 'reply', expected: undefined, stop: true },
+    ];
+    for (const sample of cases) {
+      const response = await fetch(`/diagnostics/${sample.name}.wav`);
       const buffer = await context.decodeAudioData(await response.arrayBuffer());
-      const recognizer = new model.KaldiRecognizer(buffer.sampleRate, WAKE_GRAMMAR);
+      const recognizer = new model.KaldiRecognizer(
+        buffer.sampleRate,
+        sample.stop ? INTERRUPT_GRAMMAR : WAKE_GRAMMAR,
+      );
       const text = await new Promise<string>((resolve, reject) => {
         let transcript = '';
         const timer = setTimeout(() => reject(new Error('Offline speech check timed out.')), 20000);
@@ -29,12 +45,11 @@ export async function checkOfflineSpeech(): Promise<string> {
         recognizer.retrieveFinalResult();
       });
       recognizer.remove();
-      const wake = detectWake(text.replace(/\[unk\]/g, '').trim());
-      const expected = agent === 'codex' ? 'codex' : agent === 'puck' ? 'amp' : undefined;
-      const passed = wake?.agent === expected;
-      results.push(
-        `${passed ? 'PASS' : 'FAIL'} · ${agent}: “${text}” (${expected ? 'wake phrase' : 'ordinary speech'})`,
-      );
+      const detected = sample.stop
+        ? interruptionPhrase(text, 'The tests passed.')
+        : detectWake(text.replace(/\[unk\]/g, '').trim())?.agent;
+      const passed = detected === sample.expected;
+      results.push(`${passed ? 'PASS' : 'FAIL'} · ${sample.name}: “${text}”`);
     }
     return results.join('\n');
   } finally {

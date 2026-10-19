@@ -4,7 +4,7 @@ Verified 19 October 2026. Pricing, agent capabilities, and preview APIs can chan
 
 ## Codex
 
-Freewheel uses a child `codex app-server` process with JSON-RPC over stdio. It reads account state, starts or resumes threads, starts and interrupts turns, consumes streamed events, and answers supported approval requests. The existing ChatGPT login works; a separate API key is unnecessary for coding. [App-server documentation](https://developers.openai.com/codex/app-server)
+Freewheel uses a child `codex app-server` process with JSON-RPC over stdio. It reads account state, starts or resumes threads, starts and interrupts turns, consumes streamed events, and answers supported approval requests. The existing ChatGPT login is required. The process starts with `forced_login_method="chatgpt"` and the OpenAI provider; account type is checked again before every task. API-key authentication is rejected, and OpenAI API environment variables are removed from both coding processes. [App-server documentation](https://developers.openai.com/codex/app-server)
 
 The global CLI on this Mac was 0.145.0. A real task failed because the account's configured model required a newer client. Freewheel now pins `@openai/codex@0.163.0` locally. Real new-turn and continuation tests then passed, without modifying the global CLI or the user's model configuration.
 
@@ -28,11 +28,15 @@ The local alternative is vosk-browser with vosk-model-small-en-us-0.15. WASM run
 
 Unconstrained recognition misheard synthetic “Hey Codex” as “Kodak's.” The idle recognizer now uses “hey puck,” phonetic Codex variants, and an unknown-word token. A wake switches to command dictation after acknowledgement. Both wake samples pass in Chrome and ordinary speech is rejected. This does not establish performance for accents, outdoor noise, or continuous background speech.
 
-Recognition pauses during playback to avoid feedback. This is turn-taking audio without voice interruption during playback. Task read-back requires “send it”; permission requests require a number. Spoken output is bounded and technical details stay in the transcript.
+During playback, ordinary command recognition pauses. A separate local grammar accepts only “pause audio” or “stop speaking”; it can stop voice playback but cannot start tasks or answer approvals. Partial results allow early interruption. Stopping also cancels pending browser audio fetches and clears queued announcements, while agent work continues. The model is loaded at voice-session start when installed, even with browser listening selected.
+
+Echo cancellation is requested from the browser, not guaranteed. A stop phrase present in the spoken text is ignored for that reply so the app does not obey its own words; the alternative phrase remains available unless both appear. After playback stops, a short delay discards residual audio before normal commands resume. Synthetic stop-phrase and ordinary-reply samples pass in Chrome. This does not establish performance with the actual earphones or wind. [Echo cancellation constraints](https://developer.mozilla.org/en-US/docs/Web/API/MediaTrackConstraints/echoCancellation)
+
+Task read-back requires “send it”; permission requests require a number. Spoken output is bounded and technical details stay in the transcript.
 
 ## Optional OpenAI audio
 
-Idle listening is not sent to OpenAI. After a wake and acknowledgement, optional recording ends on silence (maximum 45 seconds) and goes to the transcription endpoint using gpt-4o-mini-transcribe. Optional output uses the speech endpoint, tts-1, and Nova. System voice is the fallback. [Speech to text](https://developers.openai.com/api/docs/guides/speech-to-text), [text to speech](https://developers.openai.com/api/docs/guides/text-to-speech)
+The OpenAI key is used only by the two audio endpoints. Connecting it enables text-to-speech, leaving transcription unchanged until explicitly selected. No Responses, Chat Completions, agent or Realtime API is used by Freewheel. Idle listening and playback stop detection are not sent to the paid OpenAI API. After a wake and acknowledgement, optional recording ends on silence (maximum 45 seconds) and goes to the transcription endpoint using gpt-4o-mini-transcribe. Optional output uses the speech endpoint, tts-1, and Nova. System voice is the fallback. The transcription prompt supplies agent names and coding vocabulary, a documented technique for improving recognition of specific words; this is a reason to try it for technical dictation, not proof of better performance on a bike. [Speech to text](https://developers.openai.com/api/docs/guides/speech-to-text), [text to speech](https://developers.openai.com/api/docs/guides/text-to-speech)
 
 | Service            | Published rate used in the app |
 | ------------------ | ------------------------------ |
@@ -41,7 +45,7 @@ Idle listening is not sent to OpenAI. After a wake and acknowledgement, optional
 
 15 dictated minutes plus 9,000 spoken characters: `15 × 0.003 + 9000 / 1000000 × 15 = $0.18`. Coding is separate. The in-app budget is a conservative estimate per companion process, not a provider billing limit. [OpenAI pricing](https://developers.openai.com/api/docs/pricing)
 
-Realtime could provide more fluid interruption and turn-taking, but adds continuous audio infrastructure and separate billing. This version uses short explicit exchanges and does not call a Realtime endpoint. Paid endpoints were contract-tested with mocked fetch, not a live key.
+Local stop detection avoids a continuously billed Realtime connection. Paid speech and transcription endpoints were contract-tested with mocked fetch, not a live key.
 
 ## Sleep and execution
 

@@ -62,6 +62,10 @@ app.post('/api/credentials', async (req, res) => {
   if (input.value.trim() && /\s/.test(input.value.trim()))
     throw new Error('An access token cannot contain whitespace.');
   hub.secrets[input.provider] = input.value.trim() || undefined;
+  if (input.provider === 'openai' && input.value.trim()) {
+    // Connecting an audio key enables TTS only; transcription remains an explicit choice.
+    hub.state.settings.speech = 'openai';
+  }
   if (input.provider === 'openai' && !input.value.trim()) {
     hub.state.settings.speech = 'system';
     hub.state.settings.transcription = 'recognizer';

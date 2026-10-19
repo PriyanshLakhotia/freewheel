@@ -98,13 +98,11 @@ export class Hub extends EventEmitter {
           const result = await this.codex.request('account/read', { refreshToken: false });
           this.state.connections.codex = {
             available: true,
-            connected: !!result.account || result.requiresOpenaiAuth === false,
+            connected: result.account?.type === 'chatgpt',
             detail:
               result.account?.type === 'chatgpt'
                 ? `ChatGPT ${result.account.planType || 'subscription'}`
-                : result.account
-                  ? 'Connected with Codex credentials'
-                  : 'Run codex login to connect',
+                : 'Sign in to Codex with ChatGPT. API-key coding is disabled.',
           };
         } catch {
           this.state.connections.codex = {
@@ -200,8 +198,16 @@ export class Hub extends EventEmitter {
         );
       } else {
         await this.codex.start();
+        const account = await this.codex.request('account/read', { refreshToken: false });
+        if (account.account?.type !== 'chatgpt') {
+          this.state.connections.codex.connected = false;
+          this.state.connections.codex.detail =
+            'Sign in to Codex with ChatGPT. API-key coding is disabled.';
+          throw new Error(this.state.connections.codex.detail);
+        }
         const common = {
           cwd: project.path,
+          modelProvider: 'openai',
           approvalPolicy: 'on-request',
           approvalsReviewer: 'user',
           sandbox: 'workspace-write',

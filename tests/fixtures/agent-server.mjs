@@ -7,6 +7,16 @@ const paths = new Map();
 createInterface({ input: process.stdin }).on('line', (line) => {
   const m = JSON.parse(line);
   if (m.method === 'initialize') send({ id: m.id, result: {} });
+  else if (m.method === 'account/read')
+    send({
+      id: m.id,
+      result: {
+        account: {
+          type: process.argv.includes('--api-key') ? 'apiKey' : 'chatgpt',
+          planType: 'test',
+        },
+      },
+    });
   else if (m.method === 'thread/start') {
     const id = 'thread-' + ++thread;
     paths.set(id, m.params.cwd);

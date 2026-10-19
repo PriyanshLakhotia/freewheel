@@ -53,3 +53,27 @@ test('agent lifecycle: approval, stale reply, continuation, concurrent turn reje
     await rm(folder, { recursive: true, force: true });
   }
 });
+
+test('Codex refuses API-key accounts before starting any coding thread', async () => {
+  const hub = new Hub(
+    new RpcClient(process.execPath, [resolve('tests/fixtures/agent-server.mjs'), '--api-key']),
+  );
+  hub.state.connections.codex = {
+    available: true,
+    connected: true,
+    detail: 'Previously connected',
+  };
+  try {
+    await assert.rejects(
+      hub.dispatch('codex', 'default', 'Do some coding'),
+      /API-key coding is disabled/,
+    );
+    assert.equal(hub.state.connections.codex.connected, false);
+    assert.equal(hub.state.tasks.at(-1)?.externalId, undefined);
+    assert.equal(hub.state.tasks.at(-1)?.status, 'error');
+  } finally {
+    hub.close();
+    await delay(50);
+    await rm(folder, { recursive: true, force: true });
+  }
+});

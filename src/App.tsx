@@ -3,6 +3,7 @@ import { api, setCsrf } from './api';
 import { VoiceController, type VoiceView } from './voice/controller';
 import { Speaker } from './voice/speaker';
 import { checkOfflineSpeech } from './voice/selftest';
+import { availableInterruptionPhrase } from '../shared/speech';
 import { Icon, Wheel } from './components/Icons';
 import { Dialog } from './components/Dialog';
 import {
@@ -151,6 +152,12 @@ export default function App() {
   async function testVoice() {
     if (!state) return;
     await action('test-voice', async () => {
+      if (voice.active) {
+        await controller.current?.say(
+          'Freewheel audio test. Your microphone can stop this reply while the agents keep working.',
+        );
+        return;
+      }
       const speaker = new Speaker(() => state.settings, notify);
       await speaker.say('Freewheel audio test.');
     });
@@ -189,7 +196,10 @@ export default function App() {
       listening: '',
       awake: '',
       confirming: 'Say “send it” or “cancel”.',
-      speaking: '',
+      speaking:
+        voice.interruptReady && availableInterruptionPhrase(voice.spoken)
+          ? `Say “${availableInterruptionPhrase(voice.spoken)}” to stop.`
+          : '',
       recording: 'Pause to finish. 45-second limit.',
       transcribing: '',
       error: 'Check microphone permissions or change recognition in Connections.',
@@ -1007,7 +1017,7 @@ function Connections({
                   })
                 }
               >
-                {busy === 'model' ? 'Downloading…' : 'Download offline model · 40 MB'}
+                {busy === 'model' ? 'Downloading…' : 'Download local model · 40 MB'}
               </button>
             </div>
           )}
@@ -1026,7 +1036,7 @@ function Connections({
                   })
                 }
               >
-                {busy === 'selftest' ? 'Checking recognition…' : 'Check offline recognition'}
+                {busy === 'selftest' ? 'Checking recognition…' : 'Test local recognition'}
               </button>
               <p className="subtle">Synthetic audio; microphone stays off.</p>
               {selftest && <pre>{selftest}</pre>}
@@ -1112,12 +1122,16 @@ function Connections({
             <Icon name="volume" size={16} />
             Test sound
           </button>
-          <p className="subtle">Synthesized voices. Listening pauses during playback.</p>
+          <p className="subtle">
+            {state.modelReady
+              ? 'While listening, say “pause audio” to stop replies. Tasks keep running.'
+              : 'Download the local model above to stop replies by voice.'}
+          </p>
         </div>
       </section>
       <section className="settings-section">
         <div className="section-intro">
-          <h2>Cloud audio</h2>
+          <h2>OpenAI audio</h2>
           <p>Optional. Billed separately.</p>
         </div>
         <div className="settings-content">
@@ -1152,7 +1166,9 @@ function Connections({
               )}
             </div>
           </form>
-          <p className="subtle">Keys stay in memory until Freewheel quits.</p>
+          <p className="subtle">
+            Audio only. Coding uses Codex or Amp. Keys stay in memory until quit.
+          </p>
           <label className="inline-setting">
             Command transcription
             <select
@@ -1163,7 +1179,7 @@ function Connections({
               }
             >
               <option value="recognizer">Use the listening engine</option>
-              <option value="openai">OpenAI after the wake phrase</option>
+              <option value="openai">OpenAI · after the wake phrase</option>
             </select>
           </label>
           {state.settings.transcription === 'openai' && (
@@ -1232,6 +1248,7 @@ function Guide({ onStart }: { onStart: () => void }) {
     ['Send it / cancel', 'Confirm or discard a task.'],
     ['Status', 'Check running tasks.'],
     ['Say that again', 'Repeat the last update.'],
+    ['Pause audio / stop speaking', 'Stop a reply; keep the agent working.'],
     ['Stop working', 'Stop the addressed agent.'],
     ['New task', 'Start a new conversation.'],
     ['Approve three / deny three', 'Answer Codex request 3.'],

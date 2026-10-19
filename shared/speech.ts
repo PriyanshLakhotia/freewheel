@@ -3,6 +3,29 @@ import type { Agent } from './types.js';
 // Codex is outside the small Vosk model's vocabulary; its phonetic spelling is in it.
 // The unknown token lets background speech be rejected instead of forced into a wake phrase.
 export const WAKE_GRAMMAR = JSON.stringify(['hey puck', 'hey code x', 'hey codecs', '[unk]']);
+export const INTERRUPT_PHRASES = ['pause audio', 'stop speaking'] as const;
+export const INTERRUPT_GRAMMAR = JSON.stringify([...INTERRUPT_PHRASES, '[unk]']);
+
+const normalizeSpeech = (text: string) =>
+  text
+    .toLowerCase()
+    .replace(/[.,!?;:]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+export function interruptionPhrase(text: string, playback: string): string | undefined {
+  // Unknown words inside a phrase must not be joined into a command.
+  const heard = normalizeSpeech(text)
+    .replace(/^(?:\[unk\]\s*)+|(?:\s*\[unk\])+$/g, '')
+    .trim();
+  const output = normalizeSpeech(playback);
+  return INTERRUPT_PHRASES.find((phrase) => heard === phrase && !output.includes(phrase));
+}
+
+export function availableInterruptionPhrase(playback: string): string | undefined {
+  const output = normalizeSpeech(playback);
+  return INTERRUPT_PHRASES.find((phrase) => !output.includes(phrase));
+}
 
 export function speechText(input: string, maxWords = 65): string {
   const plain = input

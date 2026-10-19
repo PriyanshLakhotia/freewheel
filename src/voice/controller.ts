@@ -25,6 +25,7 @@ export interface VoiceView {
   startedAt?: number;
   endedAt?: number;
   error?: string;
+  interruptReady?: boolean;
 }
 interface Options {
   state: () => State;
@@ -70,6 +71,10 @@ export class VoiceController {
         options.notice(error);
       },
       level: (level) => this.patch({ level }),
+      interrupt: () => {
+        if (this.speaking) this.hush();
+      },
+      warning: options.notice,
     });
   }
   private patch(patch: Partial<VoiceView>) {
@@ -86,9 +91,17 @@ export class VoiceController {
         !this.options.state().modelReady
       )
         throw new Error('Install the offline model in Connections first.');
-      await this.recognizer.start(this.options.state().settings.recognition);
+      await this.recognizer.start(
+        this.options.state().settings.recognition,
+        this.options.state().modelReady,
+      );
       if (epoch !== this.epoch) return;
-      this.patch({ phase: 'listening', startedAt: Date.now(), endedAt: undefined });
+      this.patch({
+        phase: 'listening',
+        startedAt: Date.now(),
+        endedAt: undefined,
+        interruptReady: this.recognizer.canInterrupt,
+      });
       this.timer = setInterval(() => {
         if (this.pending && Date.now() > this.pending.expires) {
           this.pending = undefined;
@@ -134,20 +147,25 @@ export class VoiceController {
       level: 0,
       heard: '',
       endedAt: Date.now(),
+      interruptReady: false,
     });
   }
   hush() {
-    this.outputGeneration++;
+    const generation = ++this.outputGeneration;
     this.speaker.stop();
     this.queue = [];
     this.speaking = false;
+    this.recognizer.suppress(true);
     this.awakeUntil = this.pending ? Date.now() + 20000 : 0;
     this.recognizer.setCommandMode(!!this.pending);
-    this.recognizer.suppress(false);
     this.patch({
       phase: this.view.active ? (this.pending ? 'confirming' : 'listening') : 'off',
       ...(!this.pending ? { agent: undefined } : {}),
     });
+    // Flush the stop phrase and any speaker echo before admitting new commands.
+    setTimeout(() => {
+      if (generation === this.outputGeneration && this.view.active) this.recognizer.suppress(false);
+    }, 250);
   }
   private earcon(agent: Agent) {
     const context = this.recognizer.context;
@@ -172,6 +190,7 @@ export class VoiceController {
     this.speaking = true;
     this.recognizer.suppress(true);
     this.recognizer.setCommandMode(!!agent);
+    this.recognizer.listenForInterruptions(speechText(text, 80));
     this.patch({ phase: 'speaking', ...(agent ? { agent } : {}) });
     try {
       await this.speaker.say(text);
@@ -180,6 +199,7 @@ export class VoiceController {
     }
     if (epoch !== this.epoch || generation !== this.outputGeneration) return;
     this.speaking = false;
+    this.recognizer.listenForInterruptions();
     // Allow output to decay before admitting microphone input.
     await new Promise((r) => setTimeout(r, 250));
     if (epoch !== this.epoch || generation !== this.outputGeneration) return;

@@ -2,6 +2,7 @@ import { spawn, execFile, type ChildProcessWithoutNullStreams } from 'node:child
 import { createInterface } from 'node:readline';
 import { promisify } from 'node:util';
 import type { Connection, ThreadChoice } from '../../shared/types.js';
+import { agentEnvironment } from '../agent-env.js';
 const exec = promisify(execFile);
 const binary = process.env.FREEWHEEL_AMP_BIN || 'amp';
 export class AmpAdapter {
@@ -9,7 +10,7 @@ export class AmpAdapter {
   constructor(private key: () => string | undefined) {}
   private env() {
     return {
-      ...process.env,
+      ...agentEnvironment(),
       ...(this.key() ? { AMP_API_KEY: this.key() } : {}),
       AMP_UPDATE_CHECK: '0',
     };

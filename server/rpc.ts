@@ -3,6 +3,7 @@ import { createInterface } from 'node:readline';
 import { EventEmitter } from 'node:events';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
+import { agentEnvironment } from './agent-env.js';
 const require = createRequire(import.meta.url);
 const defaultBinary = process.env.FREEWHEEL_CODEX_BIN || process.execPath;
 const defaultArgs = process.env.FREEWHEEL_CODEX_BIN
@@ -13,6 +14,7 @@ const defaultArgs = process.env.FREEWHEEL_CODEX_BIN
       '--listen',
       'stdio://',
     ];
+defaultArgs.push('-c', 'forced_login_method="chatgpt"', '-c', 'model_provider="openai"');
 
 export class RpcClient extends EventEmitter {
   private proc?: ChildProcessWithoutNullStreams;
@@ -39,7 +41,7 @@ export class RpcClient extends EventEmitter {
   private async connect() {
     const proc = (this.proc = spawn(this.binary, this.args, {
       stdio: 'pipe',
-      env: { ...process.env, RUST_LOG: 'error' },
+      env: { ...agentEnvironment(), RUST_LOG: 'error' },
     }));
     const lines = createInterface({ input: proc.stdout });
     lines.on('line', (line) => {
