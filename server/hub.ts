@@ -7,185 +7,498 @@ import { RpcClient } from './rpc.js';
 import { AmpAdapter } from './adapters/amp.js';
 import { dataDir, loadState, saveState } from './store.js';
 import { extractBriefing, SPOKEN_INSTRUCTIONS } from '../shared/speech.js';
-import { agentName, type Agent, type Approval, type ServerEvent, type State, type Task, type ThreadChoice } from '../shared/types.js';
+import {
+  agentName,
+  type Agent,
+  type Approval,
+  type ServerEvent,
+  type State,
+  type Task,
+  type ThreadChoice,
+} from '../shared/types.js';
 
 export class Hub extends EventEmitter {
   state: State;
-  secrets: {amp?:string;openai?:string} = {amp:process.env.AMP_API_KEY,openai:process.env.OPENAI_API_KEY};
+  secrets: { amp?: string; openai?: string } = {
+    amp: process.env.AMP_API_KEY,
+    openai: process.env.OPENAI_API_KEY,
+  };
   codex = new RpcClient();
-  amp = new AmpAdapter(()=>this.secrets.amp);
+  amp = new AmpAdapter(() => this.secrets.amp);
   private awakeProcess?: ChildProcess;
-  private pending = new Map<string,{rpcId:number|string;method:string;params:any}>();
-  private approvalNumber=0;
+  private pending = new Map<string, { rpcId: number | string; method: string; params: any }>();
+  private approvalNumber = 0;
+  private closed = false;
   private saveTimer?: NodeJS.Timeout;
-  private itemTexts = new Map<string,Map<string,string>>();
+  private itemTexts = new Map<string, Map<string, string>>();
   private starting = new Set<Agent>();
   private stopping = new Set<string>();
-  constructor() {
-    super(); const saved=loadState();
-    this.state={...saved,approvals:[],connections:{amp:{available:false,connected:false,detail:'Checking Amp…'},codex:{available:false,connected:false,detail:'Checking Codex…'}},credentials:{amp:!!this.secrets.amp,openai:!!this.secrets.openai},awake:false,platform:process.platform,modelReady:existsSync(join(dataDir,'model.tar.gz')),audioSpend:0};
-    this.codex.on('message',message=>this.codexMessage(message));
-    this.codex.on('disconnect',()=>{
-      this.state.connections.codex.connected=false;
-      this.state.connections.codex.detail='Codex disconnected. Reconnect to continue.';
-      for(const t of this.state.tasks) if(t.agent==='codex'&&['running','waiting'].includes(t.status)) this.finish(t,'error','Codex disconnected. Your thread is saved; check it before retrying.');
+  constructor(codex?: RpcClient) {
+    super();
+    if (codex) this.codex = codex;
+    const saved = loadState();
+    this.state = {
+      ...saved,
+      approvals: [],
+      connections: {
+        amp: { available: false, connected: false, detail: 'Checking Amp…' },
+        codex: { available: false, connected: false, detail: 'Checking Codex…' },
+      },
+      credentials: { amp: !!this.secrets.amp, openai: !!this.secrets.openai },
+      awake: false,
+      platform: process.platform,
+      modelReady: existsSync(join(dataDir, 'model.tar.gz')),
+      audioSpend: 0,
+    };
+    this.codex.on('message', (message) => this.codexMessage(message));
+    this.codex.on('disconnect', () => {
+      this.state.connections.codex.connected = false;
+      this.state.connections.codex.detail = 'Codex disconnected. Reconnect to continue.';
+      for (const t of this.state.tasks)
+        if (t.agent === 'codex' && ['running', 'waiting'].includes(t.status))
+          this.finish(
+            t,
+            'error',
+            'Codex disconnected. Your thread is saved; check it before retrying.',
+          );
       this.changed();
     });
   }
-  clean(text:string):string {
-    let safe=text;
-    for(const secret of Object.values(this.secrets)) if(secret) safe=safe.split(secret).join('[redacted]');
-    return safe.replace(/\b(?:sk-[a-zA-Z0-9_-]{16,}|sgamp_[a-zA-Z0-9_-]+)\b/g,'[redacted]');
+  clean(text: string): string {
+    let safe = text;
+    for (const secret of Object.values(this.secrets))
+      if (secret) safe = safe.split(secret).join('[redacted]');
+    return safe.replace(/\b(?:sk-[a-zA-Z0-9_-]{16,}|sgamp_[a-zA-Z0-9_-]+)\b/g, '[redacted]');
   }
   changed() {
-    this.state.credentials={amp:!!this.secrets.amp,openai:!!this.secrets.openai};
-    this.emit('event',{type:'state',state:this.state} satisfies ServerEvent);
-    if(this.saveTimer)clearTimeout(this.saveTimer);
-    this.saveTimer=setTimeout(()=>saveState(this.state),200);
+    if (this.closed) return;
+    this.state.credentials = { amp: !!this.secrets.amp, openai: !!this.secrets.openai };
+    this.emit('event', { type: 'state', state: this.state } satisfies ServerEvent);
+    if (this.saveTimer) clearTimeout(this.saveTimer);
+    this.saveTimer = setTimeout(() => saveState(this.state), 200);
   }
-  announce(text:string,agent?:Agent){this.emit('event',{type:'announce',id:randomUUID(),agent,text:this.clean(text)} satisfies ServerEvent);}
+  announce(text: string, agent?: Agent, attention = false) {
+    this.emit('event', {
+      type: 'announce',
+      attention,
+      id: randomUUID(),
+      agent,
+      text: this.clean(text),
+    } satisfies ServerEvent);
+  }
   async connect() {
     await Promise.allSettled([
-      this.amp.connection().then(c=>{this.state.connections.amp=c;this.changed();}),
-      (async()=>{try {await this.codex.start();const result=await this.codex.request('account/read',{refreshToken:false});this.state.connections.codex={available:true,connected:!!result.account||result.requiresOpenaiAuth===false,detail:result.account?.type==='chatgpt'?`ChatGPT ${result.account.planType || 'subscription'}`:result.account?'Connected with Codex credentials':'Run codex login to connect'};} catch{this.state.connections.codex={available:false,connected:false,detail:'Install Codex CLI and run codex login'};}this.changed();})(),
+      this.amp.connection().then((c) => {
+        this.state.connections.amp = c;
+        this.changed();
+      }),
+      (async () => {
+        try {
+          await this.codex.start();
+          const result = await this.codex.request('account/read', { refreshToken: false });
+          this.state.connections.codex = {
+            available: true,
+            connected: !!result.account || result.requiresOpenaiAuth === false,
+            detail:
+              result.account?.type === 'chatgpt'
+                ? `ChatGPT ${result.account.planType || 'subscription'}`
+                : result.account
+                  ? 'Connected with Codex credentials'
+                  : 'Run codex login to connect',
+          };
+        } catch {
+          this.state.connections.codex = {
+            available: false,
+            connected: false,
+            detail: 'Install Codex CLI and run codex login',
+          };
+        }
+        this.changed();
+      })(),
     ]);
   }
-  async threads(agent:Agent):Promise<ThreadChoice[]> {
-    if(agent==='amp')return this.amp.threads();
+  async threads(agent: Agent): Promise<ThreadChoice[]> {
+    if (agent === 'amp') return this.amp.threads();
     await this.codex.start();
-    const result=await this.codex.request('thread/list',{limit:30,sortKey:'updated_at',sourceKinds:['cli','vscode','appServer'],archived:false});
-    return result.data.map((t:any)=>({id:t.id,title:t.name||t.preview||'Untitled Codex thread',cwd:t.cwd,updatedAt:t.updatedAt}));
+    const result = await this.codex.request('thread/list', {
+      limit: 30,
+      sortKey: 'updated_at',
+      sourceKinds: ['cli', 'vscode', 'appServer'],
+      archived: false,
+    });
+    return result.data.map((t: any) => ({
+      id: t.id,
+      title: t.name || t.preview || 'Untitled Codex thread',
+      cwd: t.cwd,
+      updatedAt: t.updatedAt,
+    }));
   }
-  async dispatch(agent:Agent,projectId:string,prompt:string,continueTaskId?:string,externalId?:string):Promise<Task> {
-    if(!this.state.connections[agent].connected)throw new Error(`${agentName(agent)} is not connected. Open Connections first.`);
-    if(this.starting.has(agent)||this.state.tasks.some(t=>t.agent===agent&&['running','waiting'].includes(t.status)))throw new Error(`${agentName(agent)} is already working. Wait, or stop the current task first.`);
-    const project=this.state.projects.find(p=>p.id===projectId);if(!project)throw new Error('Choose a project first.');
-    const previous=continueTaskId?this.state.tasks.find(t=>t.id===continueTaskId):undefined;
-    if(continueTaskId&&(!previous||previous.agent!==agent||previous.projectId!==projectId))throw new Error('That conversation belongs to another agent or project.');
-    let threadId=previous?.externalId||externalId;
-    const task:Task={id:randomUUID(),agent,projectId,prompt:this.clean(prompt),status:'running',externalId:threadId,output:'',summary:'',activity:'Starting…',createdAt:Date.now(),updatedAt:Date.now()};
-    this.starting.add(agent);this.state.tasks.push(task);this.changed();
+  async dispatch(
+    agent: Agent,
+    projectId: string,
+    prompt: string,
+    continueTaskId?: string,
+    externalId?: string,
+  ): Promise<Task> {
+    if (!this.state.connections[agent].connected)
+      throw new Error(`${agentName(agent)} is not connected. Open Connections first.`);
+    if (
+      this.starting.has(agent) ||
+      this.state.tasks.some((t) => t.agent === agent && ['running', 'waiting'].includes(t.status))
+    )
+      throw new Error(
+        `${agentName(agent)} is already working. Wait, or stop the current task first.`,
+      );
+    const project = this.state.projects.find((p) => p.id === projectId);
+    if (!project) throw new Error('Choose a project first.');
+    const previous = continueTaskId
+      ? this.state.tasks.find((t) => t.id === continueTaskId)
+      : undefined;
+    if (
+      continueTaskId &&
+      (!previous || previous.agent !== agent || previous.projectId !== projectId)
+    )
+      throw new Error('That conversation belongs to another agent or project.');
+    let threadId = previous?.externalId || externalId;
+    const task: Task = {
+      id: randomUUID(),
+      agent,
+      projectId,
+      prompt: this.clean(prompt),
+      status: 'running',
+      externalId: threadId,
+      output: '',
+      summary: '',
+      activity: 'Starting…',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    this.starting.add(agent);
+    this.state.tasks.push(task);
+    if (this.state.tasks.length > 200) {
+      const removable = this.state.tasks.findIndex(
+        (t) => !['running', 'waiting'].includes(t.status),
+      );
+      if (removable >= 0) this.state.tasks.splice(removable, 1);
+    }
+    this.changed();
     try {
-      const instructions=`${SPOKEN_INSTRUCTIONS}\n\nUser request:\n${prompt}`;
-      if(agent==='amp') {
-        this.amp.run(task.id,project.path,instructions,threadId,m=>this.ampMessage(task,m),error=>{
-          if(task.status==='stopped'||task.status==='error'||task.status==='completed')return;
-          if(error)this.finish(task,'error',error.message);
-          else this.finish(task,'completed');
-        });
+      const instructions = `${SPOKEN_INSTRUCTIONS}\n\nUser request:\n${prompt}`;
+      if (agent === 'amp') {
+        this.amp.run(
+          task.id,
+          project.path,
+          instructions,
+          threadId,
+          (m) => this.ampMessage(task, m),
+          (error) => {
+            if (task.status === 'stopped' || task.status === 'error' || task.status === 'completed')
+              return;
+            if (error) this.finish(task, 'error', error.message);
+            else this.finish(task, 'completed');
+          },
+        );
       } else {
         await this.codex.start();
-        const common={cwd:project.path,approvalPolicy:'on-request',approvalsReviewer:'user',sandbox:'workspace-write'};
-        if(threadId){
-          const read=await this.codex.request('thread/read',{threadId,includeTurns:false});
-          if(read.thread.cwd && read.thread.cwd!==project.path)throw new Error('Select the original project directory to continue this Codex thread.');
-          if(read.thread.status?.type==='active')throw new Error('This Codex thread is already active. Let its current turn finish.');
-          await this.codex.request('thread/resume',{threadId,...common});
+        const common = {
+          cwd: project.path,
+          approvalPolicy: 'on-request',
+          approvalsReviewer: 'user',
+          sandbox: 'workspace-write',
+        };
+        if (threadId) {
+          const read = await this.codex.request('thread/read', { threadId, includeTurns: false });
+          if (read.thread.cwd && read.thread.cwd !== project.path)
+            throw new Error('Select the original project directory to continue this Codex thread.');
+          if (read.thread.status?.type === 'active')
+            throw new Error('This Codex thread is already active. Let its current turn finish.');
+          await this.codex.request('thread/resume', { threadId, ...common });
         } else {
-          const response=await this.codex.request('thread/start',{...common,developerInstructions:SPOKEN_INSTRUCTIONS});
-          threadId=response.thread.id; task.externalId=threadId;
+          const response = await this.codex.request('thread/start', {
+            ...common,
+            developerInstructions: SPOKEN_INSTRUCTIONS,
+          });
+          threadId = response.thread.id;
+          task.externalId = threadId;
         }
-        if(this.stopping.has(task.id)){this.finish(task,'stopped');return task;}
-        const response=await this.codex.request('turn/start',{threadId,input:[{type:'text',text:instructions,text_elements:[]}]});
-        task.turnId=response.turn.id;
-        if(this.stopping.has(task.id))await this.stop(task.id);
+        if (this.stopping.has(task.id)) {
+          this.finish(task, 'stopped');
+          return task;
+        }
+        const response = await this.codex.request('turn/start', {
+          threadId,
+          input: [{ type: 'text', text: instructions, text_elements: [] }],
+        });
+        task.turnId = response.turn.id;
+        if (this.stopping.has(task.id)) await this.stop(task.id);
       }
-      task.activity=task.status==='running'?'Working in '+project.name:task.activity;this.changed();return task;
-    } catch(error:any){this.finish(task,'error',error.message);throw error;}
-    finally{this.starting.delete(agent);}
-  }
-  private ampMessage(task:Task,m:any) {
-    if(task.status!=='running')return;
-    if(m.session_id)task.externalId=m.session_id;
-    if(m.type==='assistant')for(const part of m.message?.content||[]){
-      if(part.type==='text')task.output=this.clean((task.output+'\n'+part.text).trim()).slice(-100000);
-      if(part.type==='tool_use')task.activity=`Using ${part.name.replace(/^builtin:/,'').replace(/_/g,' ')}`;
+      task.activity = task.status === 'running' ? 'Working in ' + project.name : task.activity;
+      this.changed();
+      return task;
+    } catch (error: any) {
+      this.finish(task, 'error', error.message);
+      throw error;
+    } finally {
+      this.starting.delete(agent);
     }
-    if(m.type==='result') {
-      if(m.result)task.output=this.clean(m.result).slice(-100000);
-      if(m.is_error)this.finish(task,'error',m.error||'Amp could not finish this task.');
-      else if(m.permission_denials?.length)this.finish(task,'error','Amp needs permission for a tool. Open the Amp thread to review it, then continue here.');
-      else this.finish(task,'completed');
-    }
-    task.updatedAt=Date.now();this.changed();
   }
-  private codexMessage(message:any) {
-    const p=message.params||{};
-    const task=[...this.state.tasks].reverse().find(t=>t.agent==='codex'&&t.externalId===p.threadId&&['running','waiting'].includes(t.status));
-    if(message.id!==undefined&&message.method) {
-      if(!task){this.codex.reject(message.id,'No active Freewheel task owns this request');return;}
-      if(['item/commandExecution/requestApproval','item/fileChange/requestApproval','item/tool/requestUserInput'].includes(message.method)) {
-        const kind=message.method.includes('commandExecution')?'command':message.method.includes('fileChange')?'files':'question';
-        const approval:Approval={id:randomUUID(),number:++this.approvalNumber,taskId:task.id,agent:'codex',kind,title:kind==='command'?'Run a command':kind==='files'?'Change files':'Codex has a question',detail:this.clean(p.command||p.reason||p.questions?.map((q:any)=>q.question).join(' ')||'Review this request in the transcript.'),questions:p.questions,createdAt:Date.now()};
-        this.pending.set(approval.id,{rpcId:message.id,method:message.method,params:p});this.state.approvals.push(approval);task.status='waiting';task.activity=approval.title;
-        this.announce(kind==='question'?`Codex asks: ${approval.detail}`:`Codex needs approval ${approval.number}. ${extractBriefing(approval.detail)} Say approve ${approval.number}, or deny ${approval.number}.`,'codex');this.changed();
-      } else if(message.method==='item/permissions/requestApproval') {
-        this.codex.respond(message.id,{permissions:{},scope:'turn'});
-        this.announce('Codex requested additional permissions. Review those in the Codex app.','codex');
-      } else if(message.method==='mcpServer/elicitation/request')this.codex.respond(message.id,{action:'decline',content:null});
-      else this.codex.reject(message.id,'This request needs the Codex interface.');
+  private ampMessage(task: Task, m: any) {
+    if (task.status !== 'running') return;
+    if (m.session_id) task.externalId = m.session_id;
+    if (m.type === 'assistant')
+      for (const part of m.message?.content || []) {
+        if (part.type === 'text')
+          task.output = this.clean((task.output + '\n' + part.text).trim()).slice(-100000);
+        if (part.type === 'tool_use')
+          task.activity = `Using ${part.name.replace(/^builtin:/, '').replace(/_/g, ' ')}`;
+      }
+    if (m.type === 'result') {
+      if (m.result) task.output = this.clean(m.result).slice(-100000);
+      if (m.is_error) this.finish(task, 'error', m.error || 'Amp could not finish this task.');
+      else if (m.permission_denials?.length)
+        this.finish(
+          task,
+          'error',
+          'Amp needs permission for a tool. Open the Amp thread to review it, then continue here.',
+        );
+      else this.finish(task, 'completed');
+    }
+    task.updatedAt = Date.now();
+    this.changed();
+  }
+  private codexMessage(message: any) {
+    const p = message.params || {};
+    const task = [...this.state.tasks]
+      .reverse()
+      .find(
+        (t) =>
+          t.agent === 'codex' &&
+          t.externalId === p.threadId &&
+          ['running', 'waiting'].includes(t.status),
+      );
+    if (message.id !== undefined && message.method) {
+      if (!task) {
+        this.codex.reject(message.id, 'No active Freewheel task owns this request');
+        return;
+      }
+      if (
+        [
+          'item/commandExecution/requestApproval',
+          'item/fileChange/requestApproval',
+          'item/tool/requestUserInput',
+        ].includes(message.method)
+      ) {
+        const kind = message.method.includes('commandExecution')
+          ? 'command'
+          : message.method.includes('fileChange')
+            ? 'files'
+            : 'question';
+        const approval: Approval = {
+          id: randomUUID(),
+          number: ++this.approvalNumber,
+          taskId: task.id,
+          agent: 'codex',
+          kind,
+          title:
+            kind === 'command'
+              ? 'Run a command'
+              : kind === 'files'
+                ? 'Change files'
+                : 'Codex has a question',
+          detail: this.clean(
+            p.command ||
+              p.reason ||
+              p.questions?.map((q: any) => q.question).join(' ') ||
+              'Review this request in the transcript.',
+          ),
+          questions: p.questions,
+          createdAt: Date.now(),
+        };
+        this.pending.set(approval.id, { rpcId: message.id, method: message.method, params: p });
+        this.state.approvals.push(approval);
+        task.status = 'waiting';
+        task.activity = approval.title;
+        this.announce(
+          kind === 'question'
+            ? `Codex asks: ${approval.detail}`
+            : `Codex needs approval ${approval.number}. ${extractBriefing(approval.detail)} Say approve ${approval.number}, or deny ${approval.number}.`,
+          'codex',
+          true,
+        );
+        this.changed();
+      } else if (message.method === 'item/permissions/requestApproval') {
+        this.codex.respond(message.id, { permissions: {}, scope: 'turn' });
+        this.announce(
+          'Codex requested additional permissions. Review those in the Codex app.',
+          'codex',
+          true,
+        );
+      } else if (message.method === 'mcpServer/elicitation/request')
+        this.codex.respond(message.id, { action: 'decline', content: null });
+      else this.codex.reject(message.id, 'This request needs the Codex interface.');
       return;
     }
-    if(message.method==='serverRequest/resolved') {
-      const entry=[...this.pending.entries()].find(([,v])=>v.rpcId===p.requestId);
-      if(entry)this.removeApproval(entry[0]);return;
+    if (message.method === 'serverRequest/resolved') {
+      const entry = [...this.pending.entries()].find(([, v]) => v.rpcId === p.requestId);
+      if (entry) this.removeApproval(entry[0]);
+      return;
     }
-    if(!task)return;
-    if(p.turnId)task.turnId=p.turnId;
-    if(message.method==='turn/started')task.turnId=p.turn?.id;
-    if(message.method==='item/agentMessage/delta') {
-      const items=this.itemTexts.get(task.id)||new Map<string,string>();
-      items.set(p.itemId,(items.get(p.itemId)||'')+p.delta);this.itemTexts.set(task.id,items);
-      task.output=this.clean([...items.values()].join('\n\n')).slice(-100000);
+    if (!task) return;
+    if (p.turnId) task.turnId = p.turnId;
+    if (message.method === 'turn/started') task.turnId = p.turn?.id;
+    if (message.method === 'item/agentMessage/delta') {
+      const items = this.itemTexts.get(task.id) || new Map<string, string>();
+      items.set(p.itemId, (items.get(p.itemId) || '') + p.delta);
+      this.itemTexts.set(task.id, items);
+      task.output = this.clean([...items.values()].join('\n\n')).slice(-100000);
     }
-    if(message.method==='item/completed'&&p.item?.type==='agentMessage') {
-      const items=this.itemTexts.get(task.id)||new Map<string,string>();items.set(p.item.id,p.item.text||'');this.itemTexts.set(task.id,items);
-      task.output=this.clean([...items.values()].join('\n\n')).slice(-100000);
-      if(p.item.phase==='final_answer')task.summary=extractBriefing(p.item.text||'');
+    if (message.method === 'item/completed' && p.item?.type === 'agentMessage') {
+      const items = this.itemTexts.get(task.id) || new Map<string, string>();
+      items.set(p.item.id, p.item.text || '');
+      this.itemTexts.set(task.id, items);
+      task.output = this.clean([...items.values()].join('\n\n')).slice(-100000);
+      if (!p.item.phase || p.item.phase === 'final_answer')
+        task.summary = extractBriefing(p.item.text || '');
     }
-    if(message.method==='item/started')task.activity=({commandExecution:'Running a command',fileChange:'Editing files',webSearch:'Looking up information',mcpToolCall:'Using a connected tool',agentMessage:'Preparing a reply'} as Record<string,string>)[p.item?.type]||'Working';
-    if(message.method==='turn/completed') {
-      const turn=p.turn;
-      this.finish(task,turn.status==='completed'?'completed':turn.status==='interrupted'?'stopped':'error',turn.error?.message);
+    if (message.method === 'item/started')
+      task.activity =
+        (
+          {
+            commandExecution: 'Running a command',
+            fileChange: 'Editing files',
+            webSearch: 'Looking up information',
+            mcpToolCall: 'Using a connected tool',
+            agentMessage: 'Preparing a reply',
+          } as Record<string, string>
+        )[p.item?.type] || 'Working';
+    if (message.method === 'turn/completed') {
+      const turn = p.turn;
+      this.finish(
+        task,
+        turn.status === 'completed'
+          ? 'completed'
+          : turn.status === 'interrupted'
+            ? 'stopped'
+            : 'error',
+        turn.error?.message,
+      );
     }
-    if(message.method==='error'&&!p.willRetry)this.finish(task,'error',p.error?.message||'Codex reported an error.');
-    task.updatedAt=Date.now();this.changed();
+    if (message.method === 'error' && !p.willRetry)
+      this.finish(task, 'error', p.error?.message || 'Codex reported an error.');
+    task.updatedAt = Date.now();
+    this.changed();
   }
-  private finish(task:Task,status:Task['status'],error?:string) {
-    task.status=status;task.updatedAt=Date.now();task.activity=status==='completed'?'Finished':status==='stopped'?'Stopped':'Needs attention';
-    if(error)task.error=this.clean(error).slice(0,2000);
-    task.summary=status==='completed'?(task.summary||extractBriefing(task.output)||'The agent finished without a spoken reply. Check the transcript.') : status==='stopped'?'Stopped. The conversation is saved.':extractBriefing(task.error||'The task did not complete.');
-    this.state.approvals.filter(a=>a.taskId===task.id).forEach(a=>this.removeApproval(a.id));
-    this.itemTexts.delete(task.id);this.stopping.delete(task.id);this.changed();
-    this.announce(`${agentName(task.agent)}. ${task.summary}`,task.agent);
+  private finish(task: Task, status: Task['status'], error?: string) {
+    task.status = status;
+    task.updatedAt = Date.now();
+    task.activity =
+      status === 'completed' ? 'Finished' : status === 'stopped' ? 'Stopped' : 'Needs attention';
+    if (error) {
+      try {
+        const parsed = JSON.parse(error);
+        error = parsed.error?.message || parsed.message || error;
+      } catch {}
+      task.error = this.clean(error!).slice(0, 2000);
+    }
+    task.summary =
+      status === 'completed'
+        ? task.summary ||
+          extractBriefing(task.output) ||
+          'The agent finished without a spoken reply. Check the transcript.'
+        : status === 'stopped'
+          ? 'Stopped. The conversation is saved.'
+          : extractBriefing(task.error || 'The task did not complete.');
+    this.state.approvals
+      .filter((a) => a.taskId === task.id)
+      .forEach((a) => this.removeApproval(a.id));
+    this.itemTexts.delete(task.id);
+    this.stopping.delete(task.id);
+    this.changed();
+    this.announce(`${agentName(task.agent)}. ${task.summary}`, task.agent, status === 'error');
   }
-  async stop(id:string) {
-    const task=this.state.tasks.find(t=>t.id===id);if(!task||!['running','waiting'].includes(task.status))throw new Error('That task is no longer running.');
+  async stop(id: string) {
+    const task = this.state.tasks.find((t) => t.id === id);
+    if (!task || !['running', 'waiting'].includes(task.status))
+      throw new Error('That task is no longer running.');
     this.stopping.add(id);
-    if(task.agent==='amp'){this.amp.stop(id);this.finish(task,'stopped');}
-    else if(task.turnId&&task.externalId){await this.codex.request('turn/interrupt',{threadId:task.externalId,turnId:task.turnId});this.finish(task,'stopped');}
-    else {task.activity='Stopping…';this.changed();}
+    if (task.agent === 'amp') {
+      this.amp.stop(id);
+      this.finish(task, 'stopped');
+    } else if (task.turnId && task.externalId) {
+      await this.codex.request('turn/interrupt', {
+        threadId: task.externalId,
+        turnId: task.turnId,
+      });
+      this.finish(task, 'stopped');
+    } else {
+      task.activity = 'Stopping…';
+      this.changed();
+    }
   }
-  answer(id:string,decision:'accept'|'decline',answers?:Record<string,string>) {
-    const pending=this.pending.get(id);const approval=this.state.approvals.find(a=>a.id===id);
-    if(!pending||!approval)throw new Error('That approval expired or was already answered.');
-    const task=this.state.tasks.find(t=>t.id===approval.taskId);
-    if(!task||task.status!=='waiting')throw new Error('This task is no longer waiting.');
-    if(approval.kind==='question') {
-      if(!answers||approval.questions?.some(q=>!answers[q.id]?.trim()))throw new Error('Answer each question before continuing.');
-      this.codex.respond(pending.rpcId,{answers:Object.fromEntries(Object.entries(answers).map(([key,value])=>[key,{answers:[value]}]))});
-    } else this.codex.respond(pending.rpcId,{decision});
-    this.removeApproval(id);task.status=this.state.approvals.some(a=>a.taskId===task.id)?'waiting':'running';task.activity='Continuing';this.changed();
+  answer(id: string, decision: 'accept' | 'decline', answers?: Record<string, string>) {
+    const pending = this.pending.get(id);
+    const approval = this.state.approvals.find((a) => a.id === id);
+    if (!pending || !approval) throw new Error('That approval expired or was already answered.');
+    const task = this.state.tasks.find((t) => t.id === approval.taskId);
+    if (!task || task.status !== 'waiting') throw new Error('This task is no longer waiting.');
+    if (approval.kind === 'question') {
+      if (!answers || approval.questions?.some((q) => !answers[q.id]?.trim()))
+        throw new Error('Answer each question before continuing.');
+      this.codex.respond(pending.rpcId, {
+        answers: Object.fromEntries(
+          Object.entries(answers).map(([key, value]) => [key, { answers: [value] }]),
+        ),
+      });
+    } else this.codex.respond(pending.rpcId, { decision });
+    this.removeApproval(id);
+    task.status = this.state.approvals.some((a) => a.taskId === task.id) ? 'waiting' : 'running';
+    task.activity = 'Continuing';
+    this.changed();
   }
-  private removeApproval(id:string){this.pending.delete(id);this.state.approvals=this.state.approvals.filter(a=>a.id!==id);this.changed();}
-  keepAwake(enabled:boolean) {
-    if(process.platform!=='darwin'&&enabled)throw new Error('Mac keep-awake is only available on macOS.');
-    if(enabled&&!this.awakeProcess){
-      const child=spawn('/usr/bin/caffeinate',['-di','-w',String(process.pid)],{stdio:'ignore'});this.awakeProcess=child;
-      child.on('error',()=>{this.awakeProcess=undefined;this.state.awake=false;this.changed();});
-      child.on('exit',()=>{if(this.awakeProcess===child){this.awakeProcess=undefined;this.state.awake=false;this.changed();}});
-    } else if(!enabled){this.awakeProcess?.kill();this.awakeProcess=undefined;}
-    this.state.awake=enabled;this.changed();
+  private removeApproval(id: string) {
+    const approval = this.state.approvals.find((a) => a.id === id);
+    this.pending.delete(id);
+    this.state.approvals = this.state.approvals.filter((a) => a.id !== id);
+    const task = this.state.tasks.find((t) => t.id === approval?.taskId);
+    if (task?.status === 'waiting' && !this.state.approvals.some((a) => a.taskId === task.id)) {
+      task.status = 'running';
+      task.activity = 'Continuing';
+    }
+    this.changed();
   }
-  close(){this.awakeProcess?.kill();this.amp.close();this.codex.close();if(this.saveTimer)clearTimeout(this.saveTimer);saveState(this.state);}
+  keepAwake(enabled: boolean) {
+    if (process.platform !== 'darwin' && enabled)
+      throw new Error('Mac keep-awake is only available on macOS.');
+    if (enabled && !this.awakeProcess) {
+      const child = spawn('/usr/bin/caffeinate', ['-di', '-w', String(process.pid)], {
+        stdio: 'ignore',
+      });
+      this.awakeProcess = child;
+      child.on('error', () => {
+        this.awakeProcess = undefined;
+        this.state.awake = false;
+        this.changed();
+      });
+      child.on('exit', () => {
+        if (this.awakeProcess === child) {
+          this.awakeProcess = undefined;
+          this.state.awake = false;
+          this.changed();
+        }
+      });
+    } else if (!enabled) {
+      this.awakeProcess?.kill();
+      this.awakeProcess = undefined;
+    }
+    this.state.awake = enabled;
+    this.changed();
+  }
+  close() {
+    this.closed = true;
+    this.awakeProcess?.kill();
+    this.amp.close();
+    this.codex.close();
+    if (this.saveTimer) clearTimeout(this.saveTimer);
+    saveState(this.state);
+  }
 }
