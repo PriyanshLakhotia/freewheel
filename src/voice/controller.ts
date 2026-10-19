@@ -110,6 +110,7 @@ export class VoiceController {
         if (this.pending && Date.now() > this.pending.expires) {
           this.pending = undefined;
           this.awakeUntil = 0;
+          this.flushQueue();
         }
         if (
           ['awake', 'confirming'].includes(this.view.phase) &&

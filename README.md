@@ -104,6 +104,7 @@ npm run smoke:amp
 npm run smoke:codex
 npm run smoke:amp -- --continue
 npm run smoke:codex -- --continue
+npm run smoke:concurrency
 ```
 
 Useful environment variables: `PORT` (default 4318), `FREEWHEEL_DATA_DIR`, `FREEWHEEL_AMP_BIN`, and `FREEWHEEL_CODEX_BIN`. Existing `AMP_API_KEY` and `OPENAI_API_KEY` environment variables are recognized; the latter is used only by the audio service. The session-only UI fields avoid putting new secrets in shell history. Never commit credentials.

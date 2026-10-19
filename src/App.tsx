@@ -54,7 +54,16 @@ export default function App() {
     clearTimeout(noticeTimer.current);
     noticeTimer.current = setTimeout(() => setNotice(''), 7000);
   };
-  const select = (agent: Agent, id?: string) => setSelected((s) => ({ ...s, [agent]: id }));
+  const select = (agent: Agent, id?: string) => {
+    const next = { ...selectedRef.current, [agent]: id };
+    selectedRef.current = next;
+    setSelected(next);
+    const taskProject = stateRef.current?.tasks.find((t) => t.id === id)?.projectId;
+    if (taskProject && stateRef.current?.projects.some((p) => p.id === taskProject)) {
+      projectRef.current = taskProject;
+      setProject(taskProject);
+    }
+  };
   useEffect(() => {
     window.scrollTo(0, 0);
   }, [tab]);

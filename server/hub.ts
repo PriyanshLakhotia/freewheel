@@ -32,12 +32,11 @@ export class Hub extends EventEmitter {
   private puckUpdates = new PuckUpdates(
     this.amp,
     (text, threadId) => {
-      const latest = [...this.state.tasks].reverse().find((t) => t.transport === 'puck');
       const task: Task = {
         id: randomUUID(),
         agent: 'amp',
         transport: 'puck',
-        projectId: latest?.projectId || this.state.projects[0]?.id || '',
+        projectId: '',
         prompt: 'Puck update',
         status: 'completed',
         externalId: threadId,
@@ -47,7 +46,7 @@ export class Hub extends EventEmitter {
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
-      this.state.tasks.push(task);
+      this.addTask(task);
       this.finish(task, 'completed');
     },
     (ready) => {
@@ -268,13 +267,7 @@ export class Hub extends EventEmitter {
       updatedAt: Date.now(),
     };
     this.starting.add(agent);
-    this.state.tasks.push(task);
-    if (this.state.tasks.length > 200) {
-      const removable = this.state.tasks.findIndex(
-        (t) => !['running', 'waiting'].includes(t.status),
-      );
-      if (removable >= 0) this.state.tasks.splice(removable, 1);
-    }
+    this.addTask(task);
     this.changed();
     try {
       const instructions = `${SPOKEN_INSTRUCTIONS}\n\nUser request:\n${prompt}`;
@@ -517,6 +510,14 @@ ${prompt}`;
       this.finish(task, 'error', p.error?.message || 'Codex reported an error.');
     task.updatedAt = Date.now();
     this.changed();
+  }
+  private addTask(task: Task) {
+    this.state.tasks.push(task);
+    while (this.state.tasks.length > 200) {
+      const index = this.state.tasks.findIndex((t) => !['running', 'waiting'].includes(t.status));
+      if (index < 0) break;
+      this.state.tasks.splice(index, 1);
+    }
   }
   private finish(task: Task, status: Task['status'], error?: string, announce = true) {
     task.status = status;

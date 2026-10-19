@@ -73,7 +73,7 @@ export class PuckUpdates {
       this.status(true);
       return true;
     } catch {
-      this.status(false);
+      if (generation === this.generation) this.status(false);
       return false;
     }
   }

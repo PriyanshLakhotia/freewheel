@@ -21,21 +21,23 @@ CI needs no microphone, credentials, real agents or paid endpoints. Vosk's lazy 
 
 ## Real integration checks
 
-| Check                                  | Observed result                                                                                                |
-| -------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| Amp and Codex authentication           | Connected using existing CLI and ChatGPT logins.                                                               |
-| Amp new conversation                   | Correct arithmetic reply, completed state and saved thread ID.                                                 |
-| Codex new conversation                 | Correct reply after pinning the project-local CLI to 0.163.0.                                                  |
-| Amp continuation                       | Recalled 51 and returned 52.                                                                                   |
-| Codex follow-up through UI             | Task details → Follow up → Send task; recalled 51 and returned 52.                                             |
-| Offline wake phrases in Chrome         | Both “hey codecs [unk]” and “hey puck [unk]” routed correctly.                                                 |
-| Ordinary speech through offline engine | “[unk] hey [unk] code [unk]” activated neither channel.                                                        |
-| Local playback stop grammar in Chrome  | “pause audio” and “stop speaking” both recognized; an ordinary spoken result matched neither.                  |
-| Subscription-only agent dispatch       | New Codex and Amp tasks completed after removing OpenAI API environment variables; Codex forced ChatGPT login. |
-| Keep-awake UI                          | Started the owned caffeinate process; turning it off removed it.                                               |
-| Production interface                   | Session, connections, task details, follow-up composer, diagnostics and responsive layout inspected.           |
-| Companion restart                      | Disconnected banner appeared; restarting the process restored the UI automatically with a fresh API session.   |
-| Saved conversation pickers             | Loaded 30 Codex conversations and 8 Amp conversations. Unrelated threads were not modified.                    |
+| Check                                     | Observed result                                                                                                               |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Amp and Codex authentication              | Connected using existing CLI and ChatGPT logins.                                                                              |
+| Amp new conversation                      | Correct arithmetic reply, completed state and saved thread ID.                                                                |
+| Codex new conversation                    | Correct reply after pinning the project-local CLI to 0.163.0.                                                                 |
+| Codex parallel conversations and steering | Two real conversations completed; the first accepted an instruction while working and included the requested confirmation.    |
+| Puck OAuth handoff                        | Amp accepted the published client metadata and displayed the Freewheel authorization screen; access awaits user confirmation. |
+| Amp continuation                          | Recalled 51 and returned 52.                                                                                                  |
+| Codex follow-up through UI                | Task details → Follow up → Send task; recalled 51 and returned 52.                                                            |
+| Offline wake phrases in Chrome            | Both “hey codecs [unk]” and “hey puck [unk]” routed correctly.                                                                |
+| Ordinary speech through offline engine    | “[unk] hey [unk] code [unk]” activated neither channel.                                                                       |
+| Local playback stop grammar in Chrome     | “pause audio” and “stop speaking” both recognized; an ordinary spoken result matched neither.                                 |
+| Subscription-only agent dispatch          | New Codex and Amp tasks completed after removing OpenAI API environment variables; Codex forced ChatGPT login.                |
+| Keep-awake UI                             | Started the owned caffeinate process; turning it off removed it.                                                              |
+| Production interface                      | Session, connections, task details, follow-up composer, diagnostics and responsive layout inspected.                          |
+| Companion restart                         | Disconnected banner appeared; restarting the process restored the UI automatically with a fresh API session.                  |
+| Saved conversation pickers                | Loaded 30 Codex conversations and 8 Amp conversations. Unrelated threads were not modified.                                   |
 
 The audio diagnostics use synthetic Samantha-voice WAVs, not user recordings. The initial failed Codex task remains in local history as a record of the old-client error. New tasks and continuations succeeded after the fix.
 
