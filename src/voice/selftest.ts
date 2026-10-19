@@ -5,7 +5,7 @@ export async function checkOfflineSpeech(): Promise<string> {
   const context = new AudioContext({ sampleRate: 16000 });
   const results: string[] = [];
   try {
-    for (const agent of ['codex', 'puck']) {
+    for (const agent of ['codex', 'puck', 'ambient']) {
       const response = await fetch(`/diagnostics/${agent}.wav`);
       const buffer = await context.decodeAudioData(await response.arrayBuffer());
       const recognizer = new model.KaldiRecognizer(buffer.sampleRate, WAKE_GRAMMAR);
@@ -30,8 +30,10 @@ export async function checkOfflineSpeech(): Promise<string> {
       });
       recognizer.remove();
       const wake = detectWake(text.replace(/\[unk\]/g, '').trim());
+      const expected = agent === 'codex' ? 'codex' : agent === 'puck' ? 'amp' : undefined;
+      const passed = wake?.agent === expected;
       results.push(
-        `${agent}: “${text}” (${wake ? 'wake phrase recognized' : 'wake phrase not recognized'})`,
+        `${passed ? 'PASS' : 'FAIL'} · ${agent}: “${text}” (${expected ? 'wake phrase' : 'ordinary speech'})`,
       );
     }
     return results.join('\n');

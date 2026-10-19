@@ -78,6 +78,38 @@ test('voice dispatch requires a wake phrase and confirmation; generic yes never 
     await controller.hear('Hey Codex, send it');
     assert.equal(calls.length, 2);
     assert.equal(controller.view.active, false);
+
+    state.settings.followUpSeconds = 0;
+    await controller.start();
+    await controller.hear('Hey Puck');
+    await controller.hear('Investigate the slow build');
+    assert(
+      spoken.at(-1)?.includes('Say send it'),
+      'an explicit wake must allow dictation with automatic follow-ups disabled',
+    );
+    assert.equal(calls.length, 2);
+    await controller.hear('cancel');
+
+    let finishSpeech!: () => void;
+    t.mock.method(
+      Speaker.prototype,
+      'say',
+      () =>
+        new Promise<void>((resolve) => {
+          finishSpeech = resolve;
+        }),
+    );
+    const delayed = controller.say('An update is being read.', 'codex');
+    assert.equal(controller.view.phase, 'speaking');
+    controller.hush();
+    finishSpeech();
+    await delayed;
+    assert.equal(
+      controller.view.phase,
+      'listening',
+      'old playback must not reopen the listening window after it is stopped',
+    );
+    assert.equal(controller.view.agent, undefined);
   } finally {
     controller.end();
   }

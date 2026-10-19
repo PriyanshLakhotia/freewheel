@@ -50,6 +50,7 @@ export class VoiceController {
   private queue: { text: string; agent?: Agent }[] = [];
   private speaking = false;
   private epoch = 0;
+  private outputGeneration = 0;
   private recording?: AbortController;
   private timer?: ReturnType<typeof setInterval>;
   private lastHeard = { text: '', at: 0 };
@@ -116,6 +117,7 @@ export class VoiceController {
   }
   end() {
     this.epoch++;
+    this.outputGeneration++;
     this.recording?.abort();
     this.recording = undefined;
     clearInterval(this.timer);
@@ -135,11 +137,17 @@ export class VoiceController {
     });
   }
   hush() {
+    this.outputGeneration++;
     this.speaker.stop();
     this.queue = [];
     this.speaking = false;
+    this.awakeUntil = this.pending ? Date.now() + 20000 : 0;
+    this.recognizer.setCommandMode(!!this.pending);
     this.recognizer.suppress(false);
-    this.patch({ phase: this.view.active ? 'listening' : 'off' });
+    this.patch({
+      phase: this.view.active ? (this.pending ? 'confirming' : 'listening') : 'off',
+      ...(!this.pending ? { agent: undefined } : {}),
+    });
   }
   private earcon(agent: Agent) {
     const context = this.recognizer.context;
@@ -160,6 +168,7 @@ export class VoiceController {
     this.patch({ spoken: text });
     if (!this.view.active) return;
     const epoch = this.epoch;
+    const generation = ++this.outputGeneration;
     this.speaking = true;
     this.recognizer.suppress(true);
     this.recognizer.setCommandMode(!!agent);
@@ -169,11 +178,11 @@ export class VoiceController {
     } catch (error: any) {
       this.options.notice(error.message);
     }
-    if (epoch !== this.epoch) return;
+    if (epoch !== this.epoch || generation !== this.outputGeneration) return;
     this.speaking = false;
     // Allow output to decay before admitting microphone input.
     await new Promise((r) => setTimeout(r, 250));
-    if (epoch !== this.epoch) return;
+    if (epoch !== this.epoch || generation !== this.outputGeneration) return;
     this.recognizer.suppress(false);
     this.awakeUntil =
       Date.now() + (this.pending ? 20000 : this.options.state().settings.followUpSeconds * 1000);
@@ -210,7 +219,12 @@ export class VoiceController {
       }
       const command = wake ? wake.command : raw;
       if (!command) {
+        const output = this.outputGeneration + 1;
         await this.say(`${agentName(agent)}. Go ahead.`, agent);
+        if (!this.view.active || output !== this.outputGeneration) return;
+        // An explicit wake always opens a command window, even when automatic follow-ups are off.
+        this.awakeUntil = Date.now() + 20000;
+        this.recognizer.setCommandMode(true);
         if (this.options.state().settings.transcription === 'openai') await this.dictate(agent);
         return;
       }

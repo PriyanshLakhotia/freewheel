@@ -55,44 +55,64 @@ export default function App() {
   };
   const select = (agent: Agent, id?: string) => setSelected((s) => ({ ...s, [agent]: id }));
   useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [tab]);
+  useEffect(() => {
     let stream: EventSource | undefined;
+    let retry: ReturnType<typeof setTimeout> | undefined;
     let cancelled = false;
-    api('/bootstrap')
-      .then(({ csrf, state }) => {
-        if (cancelled) return;
-        setCsrf(csrf);
-        setState(state);
-        setProject(state.projects[0]?.id || '');
-        controller.current = new VoiceController({
-          state: () => stateRef.current!,
-          project: () => projectRef.current,
-          selected: (agent) => selectedRef.current[agent],
-          select,
-          view: setVoice,
-          notice: notify,
-        });
-        stream = new EventSource('/api/events');
-        stream.onopen = () => setOnline(true);
-        stream.onerror = () => {
+    const connect = () =>
+      api('/bootstrap')
+        .then(({ csrf, state }) => {
+          if (cancelled) return;
+          setCsrf(csrf);
+          setFatal('');
+          setState(state);
+          setProject((current) =>
+            state.projects.some((p: State['projects'][number]) => p.id === current)
+              ? current
+              : state.projects[0]?.id || '',
+          );
+          controller.current ||= new VoiceController({
+            state: () => stateRef.current!,
+            project: () => projectRef.current,
+            selected: (agent) => selectedRef.current[agent],
+            select,
+            view: setVoice,
+            notice: notify,
+          });
+          stream = new EventSource('/api/events');
+          stream.onopen = () => setOnline(true);
+          stream.onerror = () => {
+            stream?.close();
+            setOnline(false);
+            controller.current?.end();
+            retry = setTimeout(() => void connect(), 2500);
+          };
+          stream.onmessage = (event) => {
+            try {
+              const data = JSON.parse(event.data);
+              if (data.type === 'state') setState(data.state);
+              else if (data.type === 'announce')
+                controller.current?.announce(data.text, data.agent, data.attention);
+            } catch {
+              /* Ignore a malformed event; next state repairs the view. */
+            }
+          };
+        })
+        .catch((error) => {
+          if (cancelled) return;
           setOnline(false);
-          controller.current?.end();
-        };
-        stream.onmessage = (event) => {
-          try {
-            const data = JSON.parse(event.data);
-            if (data.type === 'state') setState(data.state);
-            else if (data.type === 'announce')
-              controller.current?.announce(data.text, data.agent, data.attention);
-          } catch {
-            /* Ignore a malformed event; next state repairs the view. */
-          }
-        };
-      })
-      .catch((error) => setFatal(error.message));
+          setFatal(error.message);
+          retry = setTimeout(() => void connect(), 5000);
+        });
+    void connect();
     const tick = setInterval(() => setClock(Date.now()), 1000);
     return () => {
       cancelled = true;
       stream?.close();
+      clearTimeout(retry);
+      clearTimeout(noticeTimer.current);
       clearInterval(tick);
       controller.current?.end();
     };
@@ -150,12 +170,12 @@ export default function App() {
   const phaseTitle = {
     off: 'Ready when you are.',
     starting: 'Getting your mic ready.',
-    listening: 'All ears.',
+    listening: 'Listening for a wake phrase.',
     awake: `${voice.agent ? agentName(voice.agent) : 'Freewheel'} is listening.`,
     confirming: 'Sound right?',
     speaking: `${voice.agent ? agentName(voice.agent) : 'Freewheel'} is speaking.`,
     recording: 'Go ahead. Take your time.',
-    transcribing: 'Finding your words.',
+    transcribing: 'Transcribing your command.',
     error: 'Let’s check your mic.',
   }[voice.phase];
   const phaseHint =
@@ -225,8 +245,8 @@ export default function App() {
             {tab === 'session'
               ? 'Your workspace'
               : tab === 'connections'
-                ? 'Make yourself at home'
-                : 'Before you head out'}
+                ? 'Setup'
+                : 'Voice commands and help'}
           </div>
           <div className="local-badge">
             <span className={`connection-dot ${online ? 'connected' : ''}`} />
@@ -405,7 +425,7 @@ export default function App() {
                       onClick={() => void update({ quiet: !state.settings.quiet })}
                     >
                       <span className="small-switch" />
-                      {state.settings.quiet ? 'Quiet mode on' : 'Spoken updates on'}
+                      {state.settings.quiet ? 'Quiet mode on' : 'Quiet mode off'}
                     </button>
                   </div>
                 </section>
@@ -1033,8 +1053,7 @@ function Connections({
                 On this Mac <span>No API key</span>
               </strong>
               <p>
-                Vosk recognition runs in your browser. No audio leaves for recognition; accuracy
-                varies.
+                Vosk runs in your browser. Say the wake phrase, wait for “go ahead,” then speak.
               </p>
               <span className="selection-ring" />
             </button>
@@ -1074,7 +1093,7 @@ function Connections({
                 {busy === 'selftest' ? 'Checking recognition…' : 'Check offline recognition'}
               </button>
               <p className="subtle">
-                Plays a synthetic sample into the recognizer. Does not access your microphone.
+                Tests synthetic wake phrases and ordinary speech. Does not access your microphone.
               </p>
               {selftest && <pre>{selftest}</pre>}
             </div>
@@ -1341,7 +1360,8 @@ function Guide({ onStart }: { onStart: () => void }) {
         <h2>A small vocabulary goes a long way.</h2>
         <p>
           Start with a wake phrase. For a few seconds after a reply, you can answer the same agent
-          without repeating its name.
+          without repeating its name. With offline listening or cloud transcription, pause after the
+          wake phrase and wait for “go ahead” before giving the task.
         </p>
         <div className="command-table">
           {commands.map(([command, meaning]) => (

@@ -8,14 +8,28 @@ const headers = { 'Content-Type': 'application/json', Cookie: cookie, 'X-Freewhe
 const agent = process.argv[2];
 if (!['amp', 'codex'].includes(agent))
   throw new Error('Pass amp or codex. This starts one real agent turn.');
+const continuing = process.argv.includes('--continue');
+const previous = continuing
+  ? [...state.tasks]
+      .reverse()
+      .find(
+        (t: any) =>
+          t.agent === agent &&
+          t.status === 'completed' &&
+          t.prompt.startsWith('Freewheel connection test.'),
+      )
+  : undefined;
+if (continuing && !previous) throw new Error('Run the new-conversation smoke test first.');
 const created = await fetch(`${origin}/api/tasks`, {
   method: 'POST',
   headers,
   body: JSON.stringify({
     agent,
-    projectId: state.projects[0].id,
-    prompt:
-      'Freewheel connection test. Do not run tools, inspect files, or make changes. Reply with exactly: Voice connection confirmed. Seventeen times three is fifty-one.',
+    projectId: previous?.projectId || state.projects[0].id,
+    ...(previous ? { continueTaskId: previous.id } : {}),
+    prompt: previous
+      ? 'Freewheel continuation test. Do not run tools, inspect files, or make changes. Recall the multiplication result from our previous turn, add one to it, and reply with the new number and a brief confirmation that you remember the conversation.'
+      : 'Freewheel connection test. Do not run tools, inspect files, or make changes. Reply with exactly: Voice connection confirmed. Seventeen times three is fifty-one.',
   }),
 });
 const task = await created.json();
